@@ -67,7 +67,7 @@ export default function HomePage() {
   const [totalTests, setTotalTests] = useState(0)
   const [totalQuestions, setTotalQuestions] = useState(0)
 
-  const availableLanguages = ["українська"]
+  const availableLanguages = ["english"]
 
   const questionCountOptions = [10, 20, 30, 50, 75, 100, 150, 200]
 
