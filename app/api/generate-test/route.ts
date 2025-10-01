@@ -1,49 +1,49 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { AzureOpenAI } from 'openai'
+import { NextRequest, NextResponse } from "next/server";
+import { AzureOpenAI } from "openai";
 
 // Типи для запиту
 interface GenerateTestRequest {
-  level: 'ecba' | 'ccba' | 'cbap'
-  questionCount: number
-  language: string
-  customPrompt?: string
-  testType?: 'basic' | 'detailed' | 'babok' | 'practical'
-  systemPrompt?: string // Системний промпт від користувача
+  level: "ecba" | "ccba" | "cbap";
+  questionCount: number;
+  language: string;
+  customPrompt?: string;
+  testType?: "basic" | "detailed" | "babok" | "practical";
+  systemPrompt?: string; // Системний промпт від користувача
 }
 
 interface TestQuestion {
-  id: number
-  question: string
-  options: string[]
-  correctAnswer: number
-  explanation: string
-  knowledgeArea?: string
-  difficulty: 'easy' | 'medium' | 'hard'
+  id: number;
+  question: string;
+  options: string[];
+  correctAnswer: number;
+  explanation: string;
+  knowledgeArea?: string;
+  difficulty: "easy" | "medium" | "hard";
 }
 
 interface GenerateTestResponse {
-  success: boolean
-  questions?: TestQuestion[]
-  error?: string
+  success: boolean;
+  questions?: TestQuestion[];
+  error?: string;
   metadata?: {
-    level: string
-    questionCount: number
-    language: string
-    generatedAt: string
-    assistantId?: string
-    threadId?: string
-  }
+    level: string;
+    questionCount: number;
+    language: string;
+    generatedAt: string;
+    assistantId?: string;
+    threadId?: string;
+  };
 }
 
 // Ініціалізація Azure OpenAI клієнта
 const azureOpenAI = new AzureOpenAI({
   apiKey: process.env.AZURE_OPENAI_API_KEY,
   endpoint: process.env.AZURE_OPENAI_ENDPOINT,
-  apiVersion: '2024-05-01-preview', // Правильна версія для Assistants API
-})
+  apiVersion: "2024-05-01-preview", // Правильна версія для Assistants API
+});
 
 // ID асистента з .env файлу
-const ASSISTANT_ID = process.env.AZURE_OPENAI_ASSISTANT_ID
+const ASSISTANT_ID = process.env.AZURE_OPENAI_ASSISTANT_ID;
 
 // Системні промпти за замовчуванням для різних рівнів
 const defaultSystemPrompts = {
@@ -58,8 +58,8 @@ const defaultSystemPrompts = {
   cbap: `Створи {{questions}} тестових питань для сертифікації CBAP (Certified Business Analysis Professional).
 Створи складні питання, які вимагають глибокого розуміння BABOK, аналізу складних сценаріїв та стратегічного мислення.
 Питання повинні бути підходящими для досвідчених бізнес-аналітиків з досвідом роботи 5+ років.
-Відповідай {{language}} мовою.`
-}
+Відповідай {{language}} мовою.`,
+};
 
 // Промпти для різних типів тестів
 const testTypePrompts = {
@@ -91,55 +91,70 @@ const testTypePrompts = {
 Зосередься на реальних сценаріях та практичному застосуванні концепцій BA.
 Включи питання на ситуаційне судження та кейс-стаді.
 Формат: Множинний вибір з поясненнями для правильних відповідей.
-Відповідай {{language}} мовою.`
-}
+Відповідай {{language}} мовою.`,
+};
 
 export async function POST(request: NextRequest) {
   try {
-    const body: GenerateTestRequest = await request.json()
-    
+    const body: GenerateTestRequest = await request.json();
+
     // Валідація вхідних даних
-    if (!body.level || !['ecba', 'ccba', 'cbap'].includes(body.level)) {
+    if (!body.level || !["ecba", "ccba", "cbap"].includes(body.level)) {
       return NextResponse.json(
-        { success: false, error: 'Невірний рівень сертифікації' },
+        { success: false, error: "Невірний рівень сертифікації" },
         { status: 400 }
-      )
+      );
     }
-    
-    if (!body.questionCount || body.questionCount < 1 || body.questionCount > 200) {
+
+    if (
+      !body.questionCount ||
+      body.questionCount < 1 ||
+      body.questionCount > 200
+    ) {
       return NextResponse.json(
-        { success: false, error: 'Кількість питань повинна бути від 1 до 200' },
+        { success: false, error: "Кількість питань повинна бути від 1 до 200" },
         { status: 400 }
-      )
+      );
     }
-    
+
     if (!body.language) {
       return NextResponse.json(
-        { success: false, error: 'Мова не вказана' },
+        { success: false, error: "Мова не вказана" },
         { status: 400 }
-      )
+      );
     }
 
     if (!ASSISTANT_ID) {
       return NextResponse.json(
-        { success: false, error: 'ID асистента не налаштований' },
+        { success: false, error: "ID асистента не налаштований" },
         { status: 500 }
-      )
+      );
     }
 
     // Визначаємо системний промпт (користувацький або за замовчуванням)
-    const systemPrompt = body.systemPrompt || defaultSystemPrompts[body.level]
-    
+    const systemPrompt = body.systemPrompt || defaultSystemPrompts[body.level];
+
     // Формування промпту
-    const testType = body.testType || 'basic'
-    let userPrompt = body.customPrompt || testTypePrompts[testType]
-    
+    const testType = body.testType || "basic";
+    let userPrompt = body.customPrompt || testTypePrompts[testType];
+
+    // Логування змінних перед заміною плейсхолдерів
+    console.log("🔍 Змінні для системного промпту:");
+    console.log("  - level:", body.level);
+    console.log("  - questionCount:", body.questionCount);
+    console.log("  - language:", body.language);
+    console.log("  - testType:", testType);
+    console.log("  - systemPrompt (перші 100 символів):", systemPrompt.substring(0, 100) + "...");
+    console.log("  - userPrompt (перші 100 символів):", userPrompt.substring(0, 100) + "...");
+
     // Заміна плейсхолдерів
     userPrompt = userPrompt
       .replace(/\{\{questions\}\}/g, body.questionCount.toString())
       .replace(/\{\{level\}\}/g, body.level.toUpperCase())
-      .replace(/\{\{language\}\}/g, body.language)
-    
+      .replace(/\{\{language\}\}/g, body.language);
+
+    console.log("📝 Промпт після заміни плейсхолдерів (перші 200 символів):", userPrompt.substring(0, 200) + "...");
+
     // Додаємо інструкції для форматування відповіді
     const formatInstructions = `
 
@@ -151,70 +166,82 @@ export async function POST(request: NextRequest) {
       "question": "Текст питання",
       "options": ["Варіант A", "Варіант B", "Варіант C", "Варіант D"],
       "correctAnswer": 0,
-      "explanation": "Пояснення правильної відповіді",
-      "knowledgeArea": "Область знань BABOK",
-      "difficulty": "easy|medium|hard"
     }
   ]
 }
 
 Мова відповіді: ${body.language}
-Переконайся, що всі питання та варіанти відповідей написані мовою: ${body.language}`
+Переконайся, що всі питання та варіанти відповідей написані мовою: ${body.language}`;
 
     const fullPrompt = `${systemPrompt}
 
-${userPrompt}${formatInstructions}`
+${userPrompt}${formatInstructions}`;
+
+    console.log("🚀 Повний промпт для LLM (довжина):", fullPrompt.length, "символів");
+    console.log("🚀 Повний промпт (перші 300 символів):", fullPrompt.substring(0, 300) + "...");
 
     // Створюємо thread
-    const thread = await azureOpenAI.beta.threads.create()
-    
+    const thread = await azureOpenAI.beta.threads.create();
+
     // Додаємо повідомлення до thread
     await azureOpenAI.beta.threads.messages.create(thread.id, {
-      role: 'user',
-      content: fullPrompt
-    })
-    
+      role: "user",
+      content: fullPrompt,
+    });
+
     // Запускаємо асистента
     const run = await azureOpenAI.beta.threads.runs.create(thread.id, {
-      assistant_id: ASSISTANT_ID
-    })
-    
+      assistant_id: ASSISTANT_ID,
+    });
+
     // Очікуємо завершення виконання
-    let runStatus = await azureOpenAI.beta.threads.runs.retrieve(thread.id, run.id)
-    
+    let runStatus = await azureOpenAI.beta.threads.runs.retrieve(
+      thread.id,
+      run.id
+    );
+
     // Polling для очікування завершення (максимум 120 секунд)
-    let attempts = 0
-    const maxAttempts = 120
-    
-    while ((runStatus.status === 'queued' || runStatus.status === 'in_progress') && attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      runStatus = await azureOpenAI.beta.threads.runs.retrieve(thread.id, run.id)
-      attempts++
+    let attempts = 0;
+    const maxAttempts = 120;
+
+    while (
+      (runStatus.status === "queued" || runStatus.status === "in_progress") &&
+      attempts < maxAttempts
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      runStatus = await azureOpenAI.beta.threads.runs.retrieve(
+        thread.id,
+        run.id
+      );
+      attempts++;
     }
-    
-    if (runStatus.status === 'completed') {
+
+    if (runStatus.status === "completed") {
       // Отримуємо повідомлення з thread
-      const messages = await azureOpenAI.beta.threads.messages.list(thread.id)
-      const lastMessage = messages.data[0]
-      
-      if (lastMessage.role === 'assistant' && lastMessage.content[0].type === 'text') {
-        const responseText = lastMessage.content[0].text.value
-        
+      const messages = await azureOpenAI.beta.threads.messages.list(thread.id);
+      const lastMessage = messages.data[0];
+
+      if (
+        lastMessage.role === "assistant" &&
+        lastMessage.content[0].type === "text"
+      ) {
+        const responseText = lastMessage.content[0].text.value;
+
         try {
           // Парсимо JSON відповідь
-          let parsedResponse
+          let parsedResponse;
           try {
-            parsedResponse = JSON.parse(responseText)
+            parsedResponse = JSON.parse(responseText);
           } catch (parseError) {
             // Якщо JSON не валідний, спробуємо витягти JSON з тексту
-            const jsonMatch = responseText.match(/\{[\s\S]*\}/)
+            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
-              parsedResponse = JSON.parse(jsonMatch[0])
+              parsedResponse = JSON.parse(jsonMatch[0]);
             } else {
-              throw new Error('Не вдалося розпарсити відповідь як JSON')
+              throw new Error("Не вдалося розпарсити відповідь як JSON");
             }
           }
-          
+
           const response: GenerateTestResponse = {
             success: true,
             questions: parsedResponse.questions,
@@ -224,65 +251,69 @@ ${userPrompt}${formatInstructions}`
               language: body.language,
               generatedAt: new Date().toISOString(),
               assistantId: ASSISTANT_ID,
-              threadId: thread.id
-            }
-          }
-          
-          return NextResponse.json(response)
+              threadId: thread.id,
+            },
+          };
+
+          return NextResponse.json(response);
         } catch (parseError) {
-          console.error('Помилка парсингу JSON:', parseError)
+          console.error("Помилка парсингу JSON:", parseError);
           return NextResponse.json(
-            { success: false, error: 'Помилка обробки відповіді асистента' },
+            { success: false, error: "Помилка обробки відповіді асистента" },
             { status: 500 }
-          )
+          );
         }
       }
-    } else if (runStatus.status === 'failed') {
-      console.error('Асистент не зміг виконати запит:', runStatus.last_error)
+    } else if (runStatus.status === "failed") {
+      console.error("Асистент не зміг виконати запит:", runStatus.last_error);
       return NextResponse.json(
-        { success: false, error: `Асистент не зміг згенерувати тест: ${runStatus.last_error?.message || 'Невідома помилка'}` },
+        {
+          success: false,
+          error: `Асистент не зміг згенерувати тест: ${
+            runStatus.last_error?.message || "Невідома помилка"
+          }`,
+        },
         { status: 500 }
-      )
+      );
     } else if (attempts >= maxAttempts) {
       return NextResponse.json(
-        { success: false, error: 'Таймаут виконання запиту (120 секунд)' },
+        { success: false, error: "Таймаут виконання запиту (120 секунд)" },
         { status: 408 }
-      )
+      );
     }
-    
-    return NextResponse.json(
-      { success: false, error: 'Неочікувана помилка при роботі з асистентом' },
-      { status: 500 }
-    )
 
+    return NextResponse.json(
+      { success: false, error: "Неочікувана помилка при роботі з асистентом" },
+      { status: 500 }
+    );
   } catch (error) {
-    console.error('Помилка генерації тесту:', error)
-    
+    console.error("Помилка генерації тесту:", error);
+
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : 'Невідома помилка'
+        error: error instanceof Error ? error.message : "Невідома помилка",
       },
       { status: 500 }
-    )
+    );
   }
 }
 
 export async function GET() {
   return NextResponse.json({
-    message: 'API для генерації тестів працює з Azure Assistants API',
+    message: "API для генерації тестів працює з Azure Assistants API",
     endpoints: {
-      POST: '/api/generate-test - Генерація тестових питань',
-      GET: '/api/generate-test - Інформація про API'
+      POST: "/api/generate-test - Генерація тестових питань",
+      GET: "/api/generate-test - Інформація про API",
     },
-    supportedLevels: ['ecba', 'ccba', 'cbap'],
-    supportedTestTypes: ['basic', 'detailed', 'babok', 'practical'],
+    supportedLevels: ["ecba", "ccba", "cbap"],
+    supportedTestTypes: ["basic", "detailed", "babok", "practical"],
     features: [
-      'Підтримка системних промптів від користувача',
-      'Azure Assistants API інтеграція',
-      'Автоматичне управління threads та runs',
-      'Розширений таймаут (120 секунд)'
+      "Підтримка системних промптів від користувача",
+      "Azure Assistants API інтеграція",
+      "Автоматичне управління threads та runs",
+      "Розширений таймаут (120 секунд)",
     ],
-    assistantId: ASSISTANT_ID || 'не налаштований'
-  })
+    assistantId: ASSISTANT_ID || "не налаштований",
+  });
 }

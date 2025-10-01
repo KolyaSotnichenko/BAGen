@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { LevelCard } from "@/components/level-card"
 import { ProgressBar } from "@/components/progress-bar"
 import { PromptModal } from "@/components/prompt-modal"
@@ -37,25 +37,26 @@ const levels: LevelConfig[] = [
 ]
 
 const defaultPrompts: Record<CertificationLevel, string> = {
-  ecba: `Створи {{questions}} тестових питань для сертифікації ECBA (Entry Certificate in Business Analysis).
-Зосередься на фундаментальних концепціях бізнес-аналізу, базових техніках та вступних знаннях BABOK.
-Питання повинні бути підходящими для початківців бізнес-аналітиків.
-Відповідай {{language}} мовою.`,
-  ccba: `Створи {{questions}} тестових питань для сертифікації CCBA (Certification of Capability in Business Analysis).
-Включи питання середньої складності, що покривають всі області знань BABOK, техніки та базові компетенції.
-Питання повинні відображати досвід бізнес-аналітика 3-5 років.
-Відповідай {{language}} мовою.`,
-  cbap: `Створи {{questions}} тестових питань для сертифікації CBAP (Certified Business Analysis Professional).
-Створюй складні питання, що вимагають глибокого розуміння BABOK, аналізу складних сценаріїв та стратегічного мислення.
-Питання повинні бути підходящими для досвідчених бізнес-аналітиків з досвідом 5+ років.
-Відповідай {{language}} мовою.`,
+  ecba: `Create {{questions}} test questions for ECBA (Entry Certificate in Business Analysis) certification.
+Focus on fundamental business analysis concepts, basic techniques, and introductory BABOK knowledge.
+Questions should be appropriate for beginner business analysts.
+Respond in {{language}} language.`,
+  ccba: `Create {{questions}} test questions for CCBA (Certification of Capability in Business Analysis) certification.
+Include medium complexity questions covering all BABOK knowledge areas, techniques, and core competencies.
+Questions should reflect 3-5 years of business analyst experience.
+Respond in {{language}} language.`,
+  cbap: `Create {{questions}} test questions for CBAP (Certified Business Analysis Professional) certification.
+Create complex questions requiring deep BABOK understanding, complex scenario analysis, and strategic thinking.
+Questions should be appropriate for experienced business analysts with 5+ years of experience.
+Respond in {{language}} language.`,
 }
 
 export default function HomePage() {
   const [selectedLevel, setSelectedLevel] = useState<CertificationLevel | null>(null)
-  const [selectedLanguage, setSelectedLanguage] = useState<string>("українська")
+  const [selectedLanguage, setSelectedLanguage] = useState<string>("english")
   const [selectedQuestionCount, setSelectedQuestionCount] = useState<number>(50)
   const [systemPrompts, setSystemPrompts] = useState<Record<CertificationLevel, string>>(defaultPrompts)
+  const [customPrompts, setCustomPrompts] = useState<Partial<Record<CertificationLevel, string>>>({})
   const [isGenerating, setIsGenerating] = useState(false)
   const [downloadLink, setDownloadLink] = useState<string | null>(null)
   const [showProgress, setShowProgress] = useState(false)
@@ -66,6 +67,31 @@ export default function HomePage() {
   const [editingLevel, setEditingLevel] = useState<CertificationLevel | null>(null)
   const [totalTests, setTotalTests] = useState(0)
   const [totalQuestions, setTotalQuestions] = useState(0)
+
+  // Завантаження збережених кастомних промптів з sessionStorage при ініціалізації
+  useEffect(() => {
+    const savedCustomPrompts = sessionStorage.getItem('baGen-custom-prompts')
+    if (savedCustomPrompts) {
+      try {
+        const parsedCustomPrompts = JSON.parse(savedCustomPrompts)
+        setCustomPrompts(parsedCustomPrompts)
+        // Об'єднуємо дефолтні промпти з кастомними
+        setSystemPrompts(prev => ({ ...prev, ...parsedCustomPrompts }))
+      } catch (error) {
+        console.error('Помилка при завантаженні збережених промптів:', error)
+      }
+    }
+  }, [])
+
+  // Збереження тільки кастомних промптів в sessionStorage при їх зміні
+  useEffect(() => {
+    if (Object.keys(customPrompts).length > 0) {
+      sessionStorage.setItem('baGen-custom-prompts', JSON.stringify(customPrompts))
+    } else {
+      // Якщо немає кастомних промптів, видаляємо ключ з sessionStorage
+      sessionStorage.removeItem('baGen-custom-prompts')
+    }
+  }, [customPrompts])
 
   const availableLanguages = ["english"]
 
@@ -82,7 +108,19 @@ export default function HomePage() {
 
   const savePrompt = (prompt: string) => {
     if (editingLevel) {
+      // Оновлюємо системні промпти
       setSystemPrompts((prev) => ({ ...prev, [editingLevel]: prompt }))
+      // Зберігаємо в кастомні промпти тільки якщо промпт відрізняється від дефолтного
+      if (prompt !== defaultPrompts[editingLevel]) {
+        setCustomPrompts((prev) => ({ ...prev, [editingLevel]: prompt }))
+      } else {
+        // Якщо промпт повернули до дефолтного, видаляємо з кастомних
+        setCustomPrompts((prev) => {
+          const newCustomPrompts = { ...prev }
+          delete newCustomPrompts[editingLevel]
+          return newCustomPrompts
+        })
+      }
     }
     setModalOpen(false)
   }
@@ -269,10 +307,10 @@ export default function HomePage() {
   // }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#667eea] to-[#764ba2] flex items-center justify-center p-5">
+    <div className="min-h-screen bg-gradient-to-br from-white via-blue-50 to-blue-100 flex items-center justify-center p-5">
       <div className="bg-white rounded-[20px] shadow-[0_20px_60px_rgba(0,0,0,0.3)] p-10 max-w-[800px] w-full animate-slideUp">
         <div className="text-center mb-10">
-          <div className="w-[60px] h-[60px] mx-auto mb-5 bg-gradient-to-br from-[#667eea] to-[#764ba2] rounded-[15px] flex items-center justify-center text-white text-2xl font-bold">
+          <div className="w-[60px] h-[60px] mx-auto mb-5 bg-gradient-to-br from-blue-400 to-blue-600 rounded-[15px] flex items-center justify-center text-white text-2xl font-bold">
             BA
           </div>
           <h1 className="text-[#2d3748] text-[28px] mb-2.5 font-bold">Генератор тестів IIBA</h1>
@@ -330,7 +368,7 @@ export default function HomePage() {
 
           <div className="flex gap-[15px] items-center flex-wrap">
             <button
-              className="px-[30px] py-3 border-none rounded-[10px] text-base font-semibold cursor-pointer transition-all duration-300 inline-flex items-center gap-2 bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white hover:translate-y-[-2px] hover:shadow-[0_10px_20px_rgba(102,126,234,0.3)] active:translate-y-0 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+              className="px-[30px] py-3 border-none rounded-[10px] text-base font-semibold cursor-pointer transition-all duration-300 inline-flex items-center gap-2 bg-gradient-to-br from-blue-400 to-blue-600 text-white hover:translate-y-[-2px] hover:shadow-[0_10px_20px_rgba(59,130,246,0.3)] active:translate-y-0 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
               onClick={generateTest}
               disabled={isGenerating || !selectedLevel}
             >

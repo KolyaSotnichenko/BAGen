@@ -19,7 +19,7 @@ export function LevelCard({
     <div
       className={`bg-[#f7fafc] border-2 border-solid rounded-xl p-5 mb-[15px] transition-all duration-300 cursor-pointer hover:border-[#667eea] hover:shadow-[0_4px_12px_rgba(102,126,234,0.1)] ${
         selected
-          ? "bg-gradient-to-br from-[rgba(102,126,234,0.1)] to-[rgba(118,75,162,0.1)] border-[#667eea]"
+          ? "bg-gradient-to-br from-blue-50 to-blue-100 border-blue-300"
           : "border-[#e2e8f0]"
       }`}
       onClick={() => onSelect(level.id)}

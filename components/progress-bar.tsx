@@ -16,7 +16,7 @@ export function ProgressBar({ progress, currentStep, message }: ProgressBarProps
 
       <div className="w-full h-2 bg-[#e2e8f0] rounded-[10px] overflow-hidden relative">
         <div
-          className="h-full bg-gradient-to-r from-[#667eea] to-[#764ba2] rounded-[10px] transition-[width] duration-300 relative overflow-hidden after:content-[''] after:absolute after:inset-0 after:bg-gradient-to-r after:from-transparent after:via-[rgba(255,255,255,0.3)] after:to-transparent after:animate-shimmer"
+          className="h-full bg-gradient-to-r from-blue-400 to-blue-600 rounded-[10px] transition-[width] duration-300 relative overflow-hidden after:content-[''] after:absolute after:inset-0 after:bg-gradient-to-r after:from-transparent after:via-[rgba(255,255,255,0.3)] after:to-transparent after:animate-shimmer"
           style={{ width: `${progress}%` }}
         />
       </div>

@@ -47,47 +47,12 @@ export async function POST(request: NextRequest) {
 
     console.log("✅ jsPDF документ створено успішно");
 
-    // Встановлюємо шрифт з підтримкою кирилиці
-    try {
-      if (body.language === "ukrainian") {
-        console.log("🔤 Setting Noto Sans font for Ukrainian");
-        doc.setFont("NotoSans", "normal");
-      } else {
-        doc.setFont("helvetica", "normal");
-      }
-    } catch (fontError) {
-      console.warn("⚠️ Font setting warning, using fallback:", fontError);
-      doc.setFont("helvetica", "normal");
-    }
-
     const localizedTexts = {
       english: {
         testTitle: `${body.level.toUpperCase()} Test Questions`,
         questionCount: `Total Questions: ${body.questions.length}`,
         createdDate: `Created: ${new Date().toLocaleDateString()}`,
         correctAnswer: "Correct Answer:",
-        explanation: "Explanation:",
-        knowledgeArea: "Knowledge Area:",
-        difficulty: "Difficulty:",
-        difficultyLevels: {
-          easy: "Easy",
-          medium: "Medium",
-          hard: "Hard",
-        },
-      },
-      ukrainian: {
-        testTitle: `Питання тесту ${body.level.toUpperCase()}`,
-        questionCount: `Загальна кількість питань: ${body.questions.length}`,
-        createdDate: `Створено: ${new Date().toLocaleDateString("uk-UA")}`,
-        correctAnswer: "Правильна відповідь:",
-        explanation: "Пояснення:",
-        knowledgeArea: "Область знань:",
-        difficulty: "Складність:",
-        difficultyLevels: {
-          easy: "Легка",
-          medium: "Середня",
-          hard: "Важка",
-        },
       },
     };
 
@@ -202,32 +167,6 @@ export async function POST(request: NextRequest) {
         margin + 10,
         currentY
       );
-
-      // Пояснення
-      if (question.explanation) {
-        setFontSafe("helvetica", "normal");
-        currentY = addText(
-          `${texts.explanation} ${question.explanation}`,
-          margin + 10,
-          currentY
-        );
-      }
-
-      // Метадані
-      const metadata = [];
-      if (question.knowledgeArea) {
-        metadata.push(`${texts.knowledgeArea} ${question.knowledgeArea}`);
-      }
-      metadata.push(
-        `${texts.difficulty} ${texts.difficultyLevels[question.difficulty]}`
-      );
-
-      if (metadata.length > 0) {
-        doc.setFontSize(8);
-        doc.setTextColor(128, 128, 128); // Сірий колір
-        currentY = addText(metadata.join(" | "), margin + 10, currentY);
-        doc.setTextColor(0, 0, 0); // Повертаємо чорний
-      }
 
       currentY += 15;
     });
