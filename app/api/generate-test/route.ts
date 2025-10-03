@@ -101,25 +101,12 @@ export async function POST(request: NextRequest) {
     console.log("  - questionCount:", body.questionCount);
     console.log("  - language:", body.language);
     console.log("  - testType:", testType);
-    console.log(
-      "  - baseSystemPrompt (перші 100 символів):",
-      baseSystemPrompt.substring(0, 100) + "..."
-    );
-    console.log(
-      "  - userPrompt (перші 100 символів):",
-      userPrompt.substring(0, 100) + "..."
-    );
 
     // Заміна плейсхолдерів у кастомному промпті користувача
     userPrompt = userPrompt
       .replace(/\{\{questions\}\}/g, body.questionCount.toString())
       .replace(/\{\{level\}\}/g, body.level.toUpperCase())
       .replace(/\{\{language\}\}/g, body.language);
-
-    console.log(
-      "📝 Кастомний промпт після заміни плейсхолдерів (перші 200 символів):",
-      userPrompt.substring(0, 200) + "..."
-    );
 
     // Додаємо інструкції для форматування відповіді
     const formatInstructions = `
@@ -135,10 +122,6 @@ export async function POST(request: NextRequest) {
       "🚀 Повний промпт для LLM (довжина):",
       fullPrompt.length,
       "символів"
-    );
-    console.log(
-      "🚀 Повний промпт (перші 300 символів):",
-      fullPrompt.substring(0, 300) + "..."
     );
 
     // Отримуємо поточну конфігурацію асистента та логуємо tools

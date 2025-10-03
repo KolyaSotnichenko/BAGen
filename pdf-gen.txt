@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import puppeteerCore from "puppeteer-core";
-import chromium from "@sparticuz/chromium";
+import puppeteer from "puppeteer";
 import { marked } from "marked";
 import { NotoSansBase64 } from "../../../lib/NotoSans-base64.js";
 
@@ -119,18 +118,18 @@ export async function POST(request: NextRequest) {
 
     // 3) Генеруємо PDF через Puppeteer
     const executablePath =
-      (process.env.PUPPETEER_EXECUTABLE_PATH as string) ||
-      (await chromium.executablePath());
-    const browser = await puppeteerCore.launch({
+      process.env.PUPPETEER_EXECUTABLE_PATH ||
+      (await puppeteer.executablePath());
+    const browser = await puppeteer.launch({
       headless: true,
-      args: chromium.args,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
       executablePath,
     });
     const page = await browser.newPage();
 
     // Increase default timeouts to avoid Navigation timeout errors on slower environments
-    page.setDefaultTimeout(240000);
-    page.setDefaultNavigationTimeout(240000);
+    page.setDefaultTimeout(120000);
+    page.setDefaultNavigationTimeout(120000);
 
     // Use a less strict lifecycle event and extend timeout for setContent
     await page.setContent(fullHtml, { waitUntil: "load", timeout: 120000 });
