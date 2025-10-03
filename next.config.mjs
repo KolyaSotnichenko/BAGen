@@ -9,6 +9,11 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  experimental: {
+    outputFileTracingIncludes: {
+      "app/api/generate-pdf/route.ts": ["node_modules/@sparticuz/chromium/bin/**"],
+    },
+  },
 }
 
 export default nextConfig
