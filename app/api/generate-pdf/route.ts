@@ -117,15 +117,31 @@ export async function POST(request: NextRequest) {
 </body>
 </html>`;
 
-    // 3) Генеруємо PDF через Puppeteer
-    const executablePath =
-      (process.env.PUPPETEER_EXECUTABLE_PATH as string) ||
-      (await chromium.executablePath());
-    const browser = await puppeteerCore.launch({
-      headless: true,
-      args: chromium.args,
-      executablePath,
-    });
+    // 3) Генеруємо PDF через Puppeteer (коректно для Vercел та локально)
+    let browser: any;
+    const isServerless = Boolean(
+      process.env.VERCEL ||
+        process.env.AWS_REGION ||
+        process.env.LAMBDA_TASK_ROOT
+    );
+
+    if (isServerless) {
+      const executablePath = await chromium.executablePath();
+      browser = await puppeteerCore.launch({
+        headless: true,
+        args: chromium.args,
+        executablePath,
+      });
+    } else {
+      const executablePath =
+        (process.env.PUPPETEER_EXECUTABLE_PATH as string) ||
+        (await chromium.executablePath());
+      const browser = await puppeteerCore.launch({
+        headless: true,
+        args: chromium.args,
+        executablePath,
+      });
+    }
     const page = await browser.newPage();
 
     // Increase default timeouts to avoid Navigation timeout errors on slower environments
