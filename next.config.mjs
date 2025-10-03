@@ -9,11 +9,11 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
-  serverExternalPackages: ["@sparticuz/chromium", "puppeteer-core"],
+  serverComponentsExternalPackages: ["puppeteer-core", "@sparticuz/chromium"],
   experimental: {
     outputFileTracingIncludes: {
       "app/api/generate-pdf/route.ts": [
-        "node_modules/@sparticuz/chromium/bin/**"
+        "node_modules/@sparticuz/chromium/bin/**",
       ],
     },
   },
