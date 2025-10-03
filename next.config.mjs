@@ -13,7 +13,7 @@ const nextConfig = {
   experimental: {
     outputFileTracingIncludes: {
       "app/api/generate-pdf/route.ts": [
-        "node_modules/@sparticuz/chromium/bin/**",
+        "./node_modules/@sparticuz/chromium/bin/**",
       ],
     },
   },

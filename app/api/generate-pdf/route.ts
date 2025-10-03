@@ -121,24 +121,29 @@ export async function POST(request: NextRequest) {
     let browser: any;
     const isServerless =
       process.platform === "linux" &&
-      Boolean(process.env.AWS_REGION || process.env.LAMBDA_TASK_ROOT || process.env.VERCEL_ENV || process.env.VERCEL);
-     if (isServerless) {
-        const executablePath = await chromium.executablePath();
-        browser = await puppeteerCore.launch({
-          headless: true,
-          args: chromium.args,
-          executablePath,
-        });
-      } else {
-        const executablePath =
+      Boolean(
+        process.env.AWS_REGION ||
+          process.env.LAMBDA_TASK_ROOT ||
+          process.env.VERCEL_ENV ||
+          process.env.VERCEL
+      );
+    if (isServerless) {
+      const executablePath = await chromium.executablePath();
+      browser = await puppeteerCore.launch({
+        headless: true,
+        args: [...chromium.args, "--no-sandbox", "--disable-setuid-sandbox"],
+        executablePath,
+      });
+    } else {
+      const executablePath =
         (process.env.PUPPETEER_EXECUTABLE_PATH as string) ||
         (await chromium.executablePath());
-        browser = await puppeteerCore.launch({
-           headless: true,
-           args: chromium.args,
-           executablePath,
-         });
-       }
+      browser = await puppeteerCore.launch({
+        headless: true,
+        args: chromium.args,
+        executablePath,
+      });
+    }
     const page = await browser.newPage();
 
     // Increase default timeouts to avoid Navigation timeout errors on slower environments
