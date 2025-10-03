@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import puppeteerCore from "puppeteer-core";
-import chromium from "@sparticuz/chromium";
+import puppeteer from "puppeteer";
 import { marked } from "marked";
 import { NotoSansBase64 } from "../../../lib/NotoSans-base64.js";
 
@@ -117,38 +116,20 @@ export async function POST(request: NextRequest) {
 </body>
 </html>`;
 
-    // 3) Генеруємо PDF через Puppeteer (коректно для Vercел та локально)
-    let browser: any;
-    const isServerless =
-      process.platform === "linux" &&
-      Boolean(
-        process.env.AWS_REGION ||
-          process.env.LAMBDA_TASK_ROOT ||
-          process.env.VERCEL_ENV ||
-          process.env.VERCEL
-      );
-    if (isServerless) {
-      const executablePath = await chromium.executablePath();
-      browser = await puppeteerCore.launch({
-        headless: true,
-        args: [...chromium.args, "--no-sandbox", "--disable-setuid-sandbox"],
-        executablePath,
-      });
-    } else {
-      const executablePath =
-        (process.env.PUPPETEER_EXECUTABLE_PATH as string) ||
-        (await chromium.executablePath());
-      browser = await puppeteerCore.launch({
-        headless: true,
-        args: chromium.args,
-        executablePath,
-      });
-    }
+    // 3) Генеруємо PDF через Puppeteer
+    const executablePath =
+      process.env.PUPPETEER_EXECUTABLE_PATH ||
+      (await puppeteer.executablePath());
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      executablePath,
+    });
     const page = await browser.newPage();
 
     // Increase default timeouts to avoid Navigation timeout errors on slower environments
-    page.setDefaultTimeout(240000);
-    page.setDefaultNavigationTimeout(240000);
+    page.setDefaultTimeout(120000);
+    page.setDefaultNavigationTimeout(120000);
 
     // Use a less strict lifecycle event and extend timeout for setContent
     await page.setContent(fullHtml, { waitUntil: "load", timeout: 120000 });

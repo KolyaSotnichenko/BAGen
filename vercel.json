@@ -1,6 +1,0 @@
-{
-  "functions": {
-    "app/api/generate-pdf.js": { "includeFiles": "node_modules/@sparticuz/chromium/bin/**/*" },
-    "app/api/generate-pdf.ts": { "includeFiles": "node_modules/@sparticuz/chromium/bin/**/*" }
-  }
-}
