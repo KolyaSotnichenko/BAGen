@@ -443,7 +443,7 @@ export default function HomePage() {
                 : "Посилання на PDF з'явиться тут"}
             </a>
 
-            {imageDataUri && (() => {
+            {/* {imageDataUri && (() => {
               const match = imageDataUri.match(/^data:(.*?);base64,(.*)$/)
               if (!match) {
                 return <span className="text-red-600">Зображення недійсне</span>
@@ -471,7 +471,7 @@ export default function HomePage() {
               } catch (e) {
                 return <span className="text-red-600">Помилка конвертації зображення</span>
               }
-            })()}
+            })()} */}
 
             {/* <button
               className="px-[30px] py-3 border-2 border-solid border-[#667eea] rounded-[10px] text-base font-semibold cursor-pointer transition-all duration-300 inline-flex items-center gap-2 bg-white text-[#667eea] hover:bg-[#667eea] hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
