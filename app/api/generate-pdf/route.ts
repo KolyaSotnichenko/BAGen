@@ -1,24 +1,54 @@
 import { NextRequest, NextResponse } from "next/server";
-import jsPDF from "jspdf";
-// Імпортуємо наш конвертований шрифт
-import "../../../lib/fonts/noto-sans-font";
+import puppeteer from "puppeteer";
+import { marked } from "marked";
+import { NotoSansBase64 } from "../../../lib/NotoSans-base64.js";
+
+export const runtime = "nodejs";
 
 interface GeneratePDFRequest {
-  level: "ecba" | "ccba" | "cbap";
-  questionCount: number;
-  language: string;
-  questions: TestQuestion[];
-  testType?: "basic" | "detailed" | "babok" | "practical";
+  llmResponse: string;
+  level?: string;
+  language?: string;
 }
 
-interface TestQuestion {
-  id: number;
-  question: string;
-  options: string[];
-  correctAnswer: number;
-  explanation: string;
-  knowledgeArea?: string;
-  difficulty: "easy" | "medium" | "hard";
+// Helper: sanitize markdown to fix broken Cyrillic spacing and ensure data URI images are valid
+function sanitizeMarkdown(src: string): string {
+  let s = src;
+  // Remove zero-width characters that may cause odd spacing
+  s = s.replace(/[\u200B-\u200D\uFEFF]/g, "");
+  // Normalize Windows/Mac line endings
+  s = s.replace(/\r\n?/g, "\n");
+
+  // Unwrap fenced code blocks that contain data URI images
+  s = s.replace(/```[\s\S]*?```/g, (block) => {
+    const match = block.match(/!\[[\s\S]*?\]\s*\(\s*data:image\/(?:png|jpeg|jpg);base64,[\s\S]*?\)/i);
+    if (match) {
+      return match[0]; // return the image markdown without code fencing
+    }
+    const raw = block.match(/data:image\/(?:png|jpeg|jpg);base64,[A-Za-z0-9+/=\s]+/i);
+    if (raw) {
+      const cleaned = raw[0].replace(/\s+/g, "");
+      return `<img src="${cleaned}" alt="Embedded image" />`;
+    }
+    return block;
+  });
+
+  // Unindent image markdown lines that might be treated as code due to leading spaces
+  s = s.replace(/^(\s{4,})(!\[[\s\S]*?\]\s*\(\s*data:image\/(?:png|jpeg|jpg);base64,[\s\S]*?\))/gm, (_m, _indent, img) => img);
+
+  // Convert markdown image with data URI to HTML <img> and strip whitespace in base64
+  s = s.replace(/!\[([^\]]*)\]\s*\(\s*(data:image\/(?:png|jpeg|jpg);base64,[\s\S]*?)\)/gi, (_m, alt, uri) => {
+    const cleaned = String(uri).replace(/\s+/g, "");
+    return `<img src="${cleaned}" alt="${alt}" />`;
+  });
+
+  // Convert standalone raw data URI occurrences to <img>
+  s = s.replace(/(^|\n)\s*(data:image\/(?:png|jpeg|jpg);base64,[A-Za-z0-9+/=\s]+)/gi, (_m, prefix, uri) => {
+    const cleaned = String(uri).replace(/\s+/g, "");
+    return `${prefix}<img src="${cleaned}" alt="Embedded image" />`;
+  });
+
+  return s;
 }
 
 export async function POST(request: NextRequest) {
@@ -27,165 +57,83 @@ export async function POST(request: NextRequest) {
 
     const body: GeneratePDFRequest = await request.json();
 
-    if (!body.questions || body.questions.length === 0) {
-      console.error("❌ No questions provided");
+    const { llmResponse, level, language } = body;
+
+    if (!llmResponse || llmResponse.trim().length === 0) {
+      console.error("❌ LLM response is empty");
       return NextResponse.json(
-        { success: false, error: "Питання не надані або порожні" },
+        { success: false, error: "Відповідь LLM порожня або не надана" },
         { status: 400 }
       );
     }
 
-    console.log("🔄 Початок генерації PDF...");
+    console.log("🔄 Початок генерації PDF з HTML...");
 
-    // Створюємо PDF документ
-    const doc = new jsPDF({
-      orientation: "portrait",
-      unit: "mm",
-      format: "a4",
-      compress: true,
+    // 1) Санітуємо Markdown та конвертуємо → HTML
+    const sanitizedMarkdown = sanitizeMarkdown(llmResponse);
+    const contentHtml = marked.parse(sanitizedMarkdown);
+
+    // 2) Обгортка HTML з базовими стилями для друку
+    const fullHtml = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${(level || 'BA Test').toUpperCase()} — Generated Test</title>
+  <style>
+    @page { size: A4; margin: 20mm; }
+    @font-face {
+      font-family: 'Noto Sans';
+      src: url(data:font/ttf;base64,${NotoSansBase64}) format('truetype');
+      font-weight: normal;
+      font-style: normal;
+      font-display: swap;
+    }
+    body { font-family: 'Noto Sans', Arial, Helvetica, sans-serif; color: #1a202c; }
+    h1, h2, h3 { color: #2d3748; }
+    pre, code { background: #f7fafc; border-radius: 6px; padding: 8px; }
+    ul { padding-left: 18px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid #e2e8f0; padding: 6px; }
+    img { max-width: 100%; height: auto; display: block; }
+  </style>
+</head>
+<body>
+  <h1 style="margin-top:0;">${(level || 'BA Test').toUpperCase()}</h1>
+  <div>${contentHtml}</div>
+</body>
+</html>`;
+
+    // 3) Генеруємо PDF через Puppeteer
+    const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || (await puppeteer.executablePath());
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      executablePath,
+    });
+    const page = await browser.newPage();
+
+    // Increase default timeouts to avoid Navigation timeout errors on slower environments
+    page.setDefaultTimeout(120000);
+    page.setDefaultNavigationTimeout(120000);
+
+    // Use a less strict lifecycle event and extend timeout for setContent
+    await page.setContent(fullHtml, { waitUntil: "load", timeout: 120000 });
+
+    const pdfBuffer = await page.pdf({
+      format: "A4",
+      printBackground: true,
+      margin: { top: "20mm", right: "20mm", bottom: "20mm", left: "20mm" },
     });
 
-    console.log("✅ jsPDF документ створено успішно");
+    await browser.close();
 
-    const localizedTexts = {
-      english: {
-        testTitle: `${body.level.toUpperCase()} Test Questions`,
-        questionCount: `Total Questions: ${body.questions.length}`,
-        createdDate: `Created: ${new Date().toLocaleDateString()}`,
-        correctAnswer: "Correct Answer:",
-      },
-    };
+    console.log("✅ PDF згенеровано успішно через Puppeteer");
 
-    const texts =
-      localizedTexts[body.language as keyof typeof localizedTexts] ||
-      localizedTexts.english;
-
-    let currentY = 20;
-    const pageHeight = 297;
-    const margin = 20;
-    const lineHeight = 7;
-
-    // Функція для додавання тексту з автоматичним переносом
-    function addText(
-      text: string,
-      x: number,
-      y: number,
-      maxWidth: number = 170
-    ): number {
-      try {
-        // Нормалізуємо текст для кращої підтримки Unicode
-        const normalizedText = text.normalize("NFC");
-        const lines = doc.splitTextToSize(normalizedText, maxWidth);
-        doc.text(lines, x, y);
-        return y + lines.length * lineHeight;
-      } catch (error) {
-        console.warn("⚠️ Text processing warning:", error);
-        // Fallback
-        const lines = doc.splitTextToSize(text, maxWidth);
-        doc.text(lines, x, y);
-        return y + lines.length * lineHeight;
-      }
-    }
-
-    function checkNewPage(requiredSpace: number = 30): void {
-      if (currentY + requiredSpace > pageHeight - margin) {
-        doc.addPage();
-        currentY = margin;
-
-        // Встановлюємо шрифт для нової сторінки
-        try {
-          if (body.language === "ukrainian") {
-            doc.setFont("NotoSans", "normal");
-          } else {
-            doc.setFont("helvetica", "normal");
-          }
-        } catch (error) {
-          doc.setFont("helvetica", "normal");
-        }
-      }
-    }
-
-    // Функція для встановлення шрифту з fallback
-    function setFontSafe(font: string, style: string): void {
-      try {
-        if (body.language === "ukrainian" && font === "helvetica") {
-          doc.setFont("NotoSans", style);
-        } else {
-          doc.setFont(font, style);
-        }
-      } catch (error) {
-        console.warn(
-          `⚠️ Font setting warning for ${font}:${style}, using fallback`
-        );
-        doc.setFont("helvetica", style);
-      }
-    }
-
-    // Додаємо заголовок
-    doc.setFontSize(16);
-    setFontSafe("helvetica", "bold");
-    currentY = addText(texts.testTitle, margin, currentY);
-    currentY += 10;
-
-    // Додаємо інформацію про тест
-    doc.setFontSize(12);
-    setFontSafe("helvetica", "normal");
-    currentY = addText(texts.questionCount, margin, currentY);
-    currentY = addText(texts.createdDate, margin, currentY);
-    currentY += 15;
-
-    // Додаємо питання
-    body.questions.forEach((question, index) => {
-      checkNewPage(50);
-
-      // Номер питання
-      doc.setFontSize(14);
-      setFontSafe("helvetica", "bold");
-      currentY = addText(
-        `${index + 1}. ${question.question}`,
-        margin,
-        currentY
-      );
-      currentY += 5;
-
-      // Варіанти відповідей
-      doc.setFontSize(12);
-      setFontSafe("helvetica", "normal");
-      question.options.forEach((option, optionIndex) => {
-        const optionLetter = String.fromCharCode(65 + optionIndex); // A, B, C, D
-        currentY = addText(`${optionLetter}. ${option}`, margin + 10, currentY);
-      });
-
-      currentY += 5;
-
-      // Правильна відповідь
-      doc.setFontSize(10);
-      setFontSafe("helvetica", "bold");
-      const correctLetter = String.fromCharCode(65 + question.correctAnswer);
-      currentY = addText(
-        `${texts.correctAnswer} ${correctLetter}`,
-        margin + 10,
-        currentY
-      );
-
-      currentY += 15;
-    });
-
-    console.log("📝 PDF content generated successfully with Noto Sans font");
-
-    // Генеруємо PDF як ArrayBuffer
-    const pdfArrayBuffer = doc.output("arraybuffer");
-
-    console.log("✅ PDF generated successfully");
-
-    // Повертаємо PDF як blob response
-    return new NextResponse(pdfArrayBuffer, {
+    return new NextResponse(pdfBuffer, {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="${
-          body.level
-        }-test-${Date.now()}.pdf"`,
+        "Content-Disposition": `attachment; filename="${(level || 'ba')}-test-${Date.now()}.pdf"`,
       },
     });
   } catch (error) {

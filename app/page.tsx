@@ -67,6 +67,37 @@ export default function HomePage() {
   const [editingLevel, setEditingLevel] = useState<CertificationLevel | null>(null)
   const [totalTests, setTotalTests] = useState(0)
   const [totalQuestions, setTotalQuestions] = useState(0)
+  const [imageDataUri, setImageDataUri] = useState<string | null>(null)
+  const [codeInterpreterUsed, setCodeInterpreterUsed] = useState<boolean>(false)
+
+  // Очищення base64 у data URI (прибираємо переноси/пробіли)
+  const cleanDataUri = (uri: string) => {
+    try {
+      const [header, payload] = uri.split(",", 2)
+      if (!header || !payload) return null
+      const cleaned = payload.replace(/\s+/g, "")
+      return `${header},${cleaned}`
+    } catch {
+      return null
+    }
+  }
+
+  // Витяг першого зображення як data:image URI з Markdown
+  const extractFirstImageDataUri = (markdown: string): string | null => {
+    // Markdown синтаксис: ![alt](data:image/...)
+    const mdImgMatch = markdown.match(/!\[[^\]]*\]\((data:image\/[a-zA-Z0-9.+\-]+;base64,[A-Za-z0-9+/=\s\r\n]+)\)/)
+    if (mdImgMatch && mdImgMatch[1]) {
+      const cleaned = cleanDataUri(mdImgMatch[1])
+      if (cleaned) return cleaned
+    }
+    // Сирий data URI у тексті/код-блоках
+    const rawMatch = markdown.match(/(data:image\/[a-zA-Z0-9.+\-]+;base64,[A-Za-z0-9+/=\s\r\n]+)/)
+    if (rawMatch && rawMatch[1]) {
+      const cleaned = cleanDataUri(rawMatch[1])
+      if (cleaned) return cleaned
+    }
+    return null
+  }
 
   // Завантаження збережених кастомних промптів з sessionStorage при ініціалізації
   useEffect(() => {
@@ -93,7 +124,7 @@ export default function HomePage() {
     }
   }, [customPrompts])
 
-  const availableLanguages = ["english"]
+  const availableLanguages = ["english", "ukrainian"]
 
   const questionCountOptions = [10, 20, 30, 50, 75, 100, 150, 200]
 
@@ -182,9 +213,10 @@ export default function HomePage() {
           level: selectedLevel,
           questionCount: questionCount,
           language: selectedLanguage,
-          systemPrompt: prompt
+          // Передаємо лише кастомний промпт користувача; дефолтний додається на бекенді
+          customPrompt: (customPrompts[selectedLevel!] || '')
             .replace("{{questions}}", String(questionCount))
-            .replace("{{level}}", selectedLevel.toUpperCase())
+            .replace("{{level}}", selectedLevel!.toUpperCase())
             .replace("{{language}}", selectedLanguage)
         }),
       })
@@ -193,18 +225,26 @@ export default function HomePage() {
         throw new Error('Помилка генерації питань')
       }
 
-      const generateData = await generateResponse.json()
+      const ciUsedHeader = generateResponse.headers.get('X-Code-Interpreter-Used') === 'true'
+      console.log('🧪 Code Interpreter Used (з заголовка):', ciUsedHeader)
+      setCodeInterpreterUsed(ciUsedHeader)
 
-      if (!generateData.success || !generateData.questions) {
-        throw new Error(generateData.error || 'Не вдалося згенерувати питання')
+      const markdownText = await generateResponse.text()
+
+      if (!markdownText || markdownText.trim().length === 0) {
+        throw new Error('Не вдалося отримати відповідь від AI')
       }
+
+      // Витягуємо першу картинку як data URI (для завантаження та перевірки)
+      const maybeImage = extractFirstImageDataUri(markdownText)
+      setImageDataUri(maybeImage)
 
       // Оновлюємо прогрес
       setProgress(90)
       setCurrentStep(4)
       setProgressMessage("Компіляція PDF документу...")
 
-      // Крок 2: Генерація PDF
+      // Крок 2: Генерація PDF (Markdown → HTML → PDF на бекенді)
       const pdfResponse = await fetch('/api/generate-pdf', {
         method: 'POST',
         headers: {
@@ -212,9 +252,8 @@ export default function HomePage() {
         },
         body: JSON.stringify({
           level: selectedLevel,
-          questionCount: questionCount,
           language: selectedLanguage,
-          questions: generateData.questions
+          llmResponse: markdownText,
         }),
       })
 
@@ -404,6 +443,36 @@ export default function HomePage() {
                 : "Посилання на PDF з'явиться тут"}
             </a>
 
+            {imageDataUri && (() => {
+              const match = imageDataUri.match(/^data:(.*?);base64,(.*)$/)
+              if (!match) {
+                return <span className="text-red-600">Зображення недійсне</span>
+              }
+              const mime = match[1]
+              const b64 = match[2].replace(/\s+/g, '')
+              try {
+                const byteChars = atob(b64)
+                const byteNums = new Array(byteChars.length)
+                for (let i = 0; i < byteChars.length; i++) byteNums[i] = byteChars.charCodeAt(i)
+                const byteArray = new Uint8Array(byteNums)
+                const blob = new Blob([byteArray], { type: mime })
+                const url = URL.createObjectURL(blob)
+                const filename = `graph-${Date.now()}.${mime.includes('png') ? 'png' : mime.includes('jpeg') ? 'jpg' : 'img'}`
+                return (
+                  <a
+                    className="px-[20px] py-3 border-2 border-solid border-[#48bb78] rounded-[10px] text-base font-semibold cursor-pointer transition-all duration-300 inline-flex items-center gap-2 bg-white text-[#48bb78] hover:bg-[#48bb78] hover:text-white"
+                    href={url}
+                    download={filename}
+                    onClick={() => setTimeout(() => URL.revokeObjectURL(url), 5000)}
+                  >
+                    📷 Завантажити картинку (перевірити)
+                  </a>
+                )
+              } catch (e) {
+                return <span className="text-red-600">Помилка конвертації зображення</span>
+              }
+            })()}
+
             {/* <button
               className="px-[30px] py-3 border-2 border-solid border-[#667eea] rounded-[10px] text-base font-semibold cursor-pointer transition-all duration-300 inline-flex items-center gap-2 bg-white text-[#667eea] hover:bg-[#667eea] hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={regenerateAnswers}
@@ -414,6 +483,12 @@ export default function HomePage() {
           </div>
 
           {showProgress && <ProgressBar progress={progress} currentStep={currentStep} message={progressMessage} />}
+
+          <div className="mt-2 text-xs">
+            <span className={`inline-block px-2 py-1 rounded ${codeInterpreterUsed ? 'bg-emerald-500' : 'bg-red-500'} text-white`}>
+              Code Interpreter: {codeInterpreterUsed ? 'увімкнено' : 'не використовувався'}
+            </span>
+          </div>
         </div>
 
         <StatsDisplay totalTests={totalTests} totalQuestions={totalQuestions} />

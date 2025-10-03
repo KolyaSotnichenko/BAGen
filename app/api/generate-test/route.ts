@@ -1,3 +1,4 @@
+import { ECBA_SYSTEM_PROMPT } from "@/shared/prompts";
 import { NextRequest, NextResponse } from "next/server";
 import { AzureOpenAI } from "openai";
 
@@ -23,23 +24,15 @@ interface TestQuestion {
 
 interface GenerateTestResponse {
   success: boolean;
-  questions?: TestQuestion[];
+  response: string;
   error?: string;
-  metadata?: {
-    level: string;
-    questionCount: number;
-    language: string;
-    generatedAt: string;
-    assistantId?: string;
-    threadId?: string;
-  };
 }
 
 // Ініціалізація Azure OpenAI клієнта
 const azureOpenAI = new AzureOpenAI({
   apiKey: process.env.AZURE_OPENAI_API_KEY,
   endpoint: process.env.AZURE_OPENAI_ENDPOINT,
-  apiVersion: "2024-05-01-preview", // Правильна версія для Assistants API
+  apiVersion: process.env.AZURE_OPENAI_API_VERSION,
 });
 
 // ID асистента з .env файлу
@@ -47,10 +40,7 @@ const ASSISTANT_ID = process.env.AZURE_OPENAI_ASSISTANT_ID;
 
 // Системні промпти за замовчуванням для різних рівнів
 const defaultSystemPrompts = {
-  ecba: `Створи {{questions}} тестових питань для сертифікації ECBA (Entry Certificate in Business Analysis).
-Зосередься на фундаментальних концепціях BA, базових техніках та вступних знаннях BABOK.
-Питання повинні бути підходящими для початківців бізнес-аналітиків.
-Відповідай {{language}} мовою.`,
+  ecba: ECBA_SYSTEM_PROMPT,
   ccba: `Створи {{questions}} тестових питань для сертифікації CCBA (Certification of Capability in Business Analysis).
 Включи питання середнього рівня складності, які покривають всі області знань BABOK, техніки та базові компетенції.
 Питання повинні відображати досвід роботи 3-5 років у сфері BA.
@@ -58,39 +48,6 @@ const defaultSystemPrompts = {
   cbap: `Створи {{questions}} тестових питань для сертифікації CBAP (Certified Business Analysis Professional).
 Створи складні питання, які вимагають глибокого розуміння BABOK, аналізу складних сценаріїв та стратегічного мислення.
 Питання повинні бути підходящими для досвідчених бізнес-аналітиків з досвідом роботи 5+ років.
-Відповідай {{language}} мовою.`,
-};
-
-// Промпти для різних типів тестів
-const testTypePrompts = {
-  basic: `Створи {{questions}} питань для сертифікації {{level}}.
-Зроби питання зрозумілими та релевантними для рівня сертифікації.
-Відповідай {{language}} мовою.`,
-
-  detailed: `Створи {{questions}} комплексних тестових питань для сертифікації {{level}}.
-Включи:
-- Питання з множинним вибором з 4 варіантами відповідей
-- Питання на основі сценаріїв
-- Покриття областей знань BABOK
-- Різні рівні складності, відповідні для {{level}}
-Надай правильні відповіді з поясненнями.
-Відповідай {{language}} мовою.`,
-
-  babok: `Створи {{questions}} питань, узгоджених з BABOK v3, для сертифікації {{level}}.
-Покрий всі 6 областей знань:
-1. Планування та моніторинг бізнес-аналізу
-2. Виявлення та співпраця
-3. Управління життєвим циклом вимог
-4. Стратегічний аналіз
-5. Аналіз вимог та визначення дизайну рішення
-6. Оцінка рішення
-Включи техніки та базові компетенції.
-Відповідай {{language}} мовою.`,
-
-  practical: `Створи {{questions}} практичних екзаменаційних питань для сертифікації {{level}}.
-Зосередься на реальних сценаріях та практичному застосуванні концепцій BA.
-Включи питання на ситуаційне судження та кейс-стаді.
-Формат: Множинний вибір з поясненнями для правильних відповідей.
 Відповідай {{language}} мовою.`,
 };
 
@@ -131,12 +88,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Визначаємо системний промпт (користувацький або за замовчуванням)
-    const systemPrompt = body.systemPrompt || defaultSystemPrompts[body.level];
+    // Визначаємо дефолтний системний промпт
+    const baseSystemPrompt = defaultSystemPrompts[body.level];
 
     // Формування промпту
     const testType = body.testType || "basic";
-    let userPrompt = body.customPrompt || testTypePrompts[testType];
+    let userPrompt = body.customPrompt || "";
 
     // Логування змінних перед заміною плейсхолдерів
     console.log("🔍 Змінні для системного промпту:");
@@ -144,41 +101,57 @@ export async function POST(request: NextRequest) {
     console.log("  - questionCount:", body.questionCount);
     console.log("  - language:", body.language);
     console.log("  - testType:", testType);
-    console.log("  - systemPrompt (перші 100 символів):", systemPrompt.substring(0, 100) + "...");
-    console.log("  - userPrompt (перші 100 символів):", userPrompt.substring(0, 100) + "...");
+    console.log(
+      "  - baseSystemPrompt (перші 100 символів):",
+      baseSystemPrompt.substring(0, 100) + "..."
+    );
+    console.log(
+      "  - userPrompt (перші 100 символів):",
+      userPrompt.substring(0, 100) + "..."
+    );
 
-    // Заміна плейсхолдерів
+    // Заміна плейсхолдерів у кастомному промпті користувача
     userPrompt = userPrompt
       .replace(/\{\{questions\}\}/g, body.questionCount.toString())
       .replace(/\{\{level\}\}/g, body.level.toUpperCase())
       .replace(/\{\{language\}\}/g, body.language);
 
-    console.log("📝 Промпт після заміни плейсхолдерів (перші 200 символів):", userPrompt.substring(0, 200) + "...");
+    console.log(
+      "📝 Кастомний промпт після заміни плейсхолдерів (перші 200 символів):",
+      userPrompt.substring(0, 200) + "..."
+    );
 
     // Додаємо інструкції для форматування відповіді
     const formatInstructions = `
 
-Відповідь надай у форматі JSON з наступною структурою:
-{
-  "questions": [
-    {
-      "id": 1,
-      "question": "Текст питання",
-      "options": ["Варіант A", "Варіант B", "Варіант C", "Варіант D"],
-      "correctAnswer": 0,
-    }
-  ]
-}
-
+Надай відповідь у чистому Markdown, без JSON.
 Мова відповіді: ${body.language}
 Переконайся, що всі питання та варіанти відповідей написані мовою: ${body.language}`;
 
-    const fullPrompt = `${systemPrompt}
+    // Повний промпт: дефолтний + кастомний + інструкції форматування
+    const fullPrompt = `${baseSystemPrompt}\n\n${userPrompt}\n\n${formatInstructions}`;
 
-${userPrompt}${formatInstructions}`;
+    console.log(
+      "🚀 Повний промпт для LLM (довжина):",
+      fullPrompt.length,
+      "символів"
+    );
+    console.log(
+      "🚀 Повний промпт (перші 300 символів):",
+      fullPrompt.substring(0, 300) + "..."
+    );
 
-    console.log("🚀 Повний промпт для LLM (довжина):", fullPrompt.length, "символів");
-    console.log("🚀 Повний промпт (перші 300 символів):", fullPrompt.substring(0, 300) + "...");
+    // Отримуємо поточну конфігурацію асистента та логуємо tools
+    const assistant = await azureOpenAI.beta.assistants.retrieve(ASSISTANT_ID);
+    console.log(
+      "🔧 Assistant tools:",
+      (assistant.tools || []).map((t: any) => t.type)
+    );
+    if (!assistant.tools?.some((t: any) => t.type === "code_interpreter")) {
+      console.warn(
+        "⚠️ Увага: у асистента відсутній code_interpreter у списку tools"
+      );
+    }
 
     // Створюємо thread
     const thread = await azureOpenAI.beta.threads.create();
@@ -202,7 +175,7 @@ ${userPrompt}${formatInstructions}`;
 
     // Polling для очікування завершення (максимум 120 секунд)
     let attempts = 0;
-    const maxAttempts = 120;
+    const maxAttempts = 600;
 
     while (
       (runStatus.status === "queued" || runStatus.status === "in_progress") &&
@@ -217,53 +190,156 @@ ${userPrompt}${formatInstructions}`;
     }
 
     if (runStatus.status === "completed") {
-      // Отримуємо повідомлення з thread
-      const messages = await azureOpenAI.beta.threads.messages.list(thread.id);
-      const lastMessage = messages.data[0];
-
-      if (
-        lastMessage.role === "assistant" &&
-        lastMessage.content[0].type === "text"
-      ) {
-        const responseText = lastMessage.content[0].text.value;
-
-        try {
-          // Парсимо JSON відповідь
-          let parsedResponse;
-          try {
-            parsedResponse = JSON.parse(responseText);
-          } catch (parseError) {
-            // Якщо JSON не валідний, спробуємо витягти JSON з тексту
-            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-              parsedResponse = JSON.parse(jsonMatch[0]);
-            } else {
-              throw new Error("Не вдалося розпарсити відповідь як JSON");
+      // Дістаємо кроки виконання run, щоб перевірити використання code interpreter
+      let codeInterpreterUsed = false;
+      try {
+        const steps = await azureOpenAI.beta.threads.runs.steps.list(
+          thread.id,
+          run.id
+        );
+        console.log("🧪 Кількість кроків run:", steps.data.length);
+        for (const step of steps.data) {
+          const details: any =
+            (step as any).step_details || (step as any).details;
+          const toolCalls: any[] = details?.tool_calls || [];
+          for (const tc of toolCalls) {
+            const type = tc.type || tc?.tool_call_type;
+            if (type === "code_interpreter" || type === "code") {
+              codeInterpreterUsed = true;
             }
           }
+        }
+        console.log("🧪 Code Interpreter використано:", codeInterpreterUsed);
+      } catch (e) {
+        console.warn(
+          "⚠️ Не вдалося отримати кроки run для перевірки code interpreter:",
+          e
+        );
+      }
 
-          const response: GenerateTestResponse = {
-            success: true,
-            questions: parsedResponse.questions,
-            metadata: {
-              level: body.level,
-              questionCount: body.questionCount,
-              language: body.language,
-              generatedAt: new Date().toISOString(),
-              assistantId: ASSISTANT_ID,
-              threadId: thread.id,
-            },
-          };
+      // Отримуємо повідомлення з thread
+      const messages = await azureOpenAI.beta.threads.messages.list(thread.id);
+      console.log("🧪 Всього повідомлень у thread:", messages.data.length);
 
-          return NextResponse.json(response);
-        } catch (parseError) {
-          console.error("Помилка парсингу JSON:", parseError);
-          return NextResponse.json(
-            { success: false, error: "Помилка обробки відповіді асистента" },
-            { status: 500 }
-          );
+      // Підбираємо перше повідомлення асистента з текстом і об'єднуємо всі текстові частини
+      const pickAssistantText = (): string => {
+        for (const msg of messages.data) {
+          if (msg.role !== "assistant") continue;
+          const types = (msg.content || []).map((c: any) => c.type);
+          console.log("🧪 Типи контенту повідомлення асистента:", types);
+          const textParts = (msg.content || [])
+            .filter((c: any) => c.type === "text" && c.text)
+            .map((c: any) =>
+              typeof c.text === "string" ? c.text : c.text.value
+            )
+            .filter(Boolean);
+          if (textParts.length) {
+            return textParts.join("\n").trim();
+          }
+        }
+        return "";
+      };
+
+      // Знайти перше зображення, повернуте як image_file, і завантажити його як data URI
+      const pickFirstImageFileId = (): string | null => {
+        for (const msg of messages.data) {
+          if (msg.role !== "assistant") continue;
+          for (const c of msg.content || []) {
+            if (c.type === "image_file" && c.image_file?.file_id) {
+              return c.image_file.file_id;
+            }
+          }
+        }
+        return null;
+      };
+
+      let imageDataUri: string | null = null;
+      const imageFileId = pickFirstImageFileId();
+      if (imageFileId) {
+        try {
+          const meta = await azureOpenAI.files.retrieve(imageFileId);
+          const filename = (meta as any)?.filename || "";
+          let mime = "image/png";
+          if (
+            filename.toLowerCase().endsWith(".jpg") ||
+            filename.toLowerCase().endsWith(".jpeg")
+          )
+            mime = "image/jpeg";
+          else if (filename.toLowerCase().endsWith(".png")) mime = "image/png";
+
+          const fileResp: any = await azureOpenAI.files.content(imageFileId);
+          let arrayBuffer: ArrayBuffer | null = null;
+          if (typeof fileResp.arrayBuffer === "function") {
+            arrayBuffer = await fileResp.arrayBuffer();
+          } else if (fileResp?.data) {
+            arrayBuffer = fileResp.data as ArrayBuffer;
+          } else if (typeof fileResp.blob === "function") {
+            const blob = await fileResp.blob();
+            arrayBuffer = await blob.arrayBuffer();
+          } else if (
+            fileResp?.body &&
+            typeof fileResp.body.arrayBuffer === "function"
+          ) {
+            arrayBuffer = await fileResp.body.arrayBuffer();
+          }
+
+          if (arrayBuffer) {
+            const base64 = Buffer.from(arrayBuffer as any).toString("base64");
+            imageDataUri = `data:${mime};base64,${base64}`;
+            console.log("🖼️ Отримано зображення від асистента:", {
+              imageFileId,
+              filename,
+              mime,
+              size: (arrayBuffer as any).byteLength,
+            });
+          } else {
+            console.warn("⚠️ Не вдалося отримати байти з image_file відповіді");
+          }
+        } catch (e) {
+          console.warn("⚠️ Не вдалося завантажити image_file контент:", e);
         }
       }
+
+      const responseText = pickAssistantText();
+      const finalMarkdown = (() => {
+        if (responseText && imageDataUri)
+          return `${responseText}\n\n![Generated Image](${imageDataUri})`;
+        if (responseText) return responseText;
+        if (imageDataUri) return `![Generated Image](${imageDataUri})`;
+        return "";
+      })();
+
+      if (finalMarkdown) {
+        // Повертаємо сирий текст (Markdown) з можливим вбудованим зображенням + діагностичні заголовки
+        return new NextResponse(finalMarkdown, {
+          status: 200,
+          headers: {
+            "Content-Type": "text/plain; charset=utf-8",
+            "X-Code-Interpreter-Used": codeInterpreterUsed ? "true" : "false",
+            "X-Thread-Id": thread.id,
+            "X-Run-Id": run.id,
+            "X-Image-Embedded": imageDataUri ? "true" : "false",
+          },
+        });
+      }
+
+      // Якщо немає тексту і немає зображення — повертаємо 200 з поясненням
+      console.warn(
+        "⚠️ Асистент завершився без текстового контенту та без зображень."
+      );
+      return new NextResponse(
+        "⚠️ Асистент згенерував результат без текстового Markdown та без зображень. Додайте до промпту інструкцію вставляти зображення як інлайн data:image/png;base64,... у Markdown.",
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "text/plain; charset=utf-8",
+            "X-Code-Interpreter-Used": codeInterpreterUsed ? "true" : "false",
+            "X-Thread-Id": thread.id,
+            "X-Run-Id": run.id,
+            "X-Image-Embedded": "false",
+          },
+        }
+      );
     } else if (runStatus.status === "failed") {
       console.error("Асистент не зміг виконати запит:", runStatus.last_error);
       return NextResponse.json(
