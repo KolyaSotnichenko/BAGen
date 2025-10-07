@@ -8,7 +8,7 @@ import { NotoSansBase64 } from "../../../lib/NotoSans-base64.js";
 export const dynamic = "force-dynamic";
 
 const remoteExecutablePath =
-  "https://github.com/Sparticuz/chromium/releases/download/v121.0.0/chromium-v121.0.0-pack.tar";
+  "https://github.com/Sparticuz/chromium/releases/download/v121.0.0/chromium-v141.0.0-pack.x64.tar";
 let browser: any;
 
 interface GeneratePDFRequest {
