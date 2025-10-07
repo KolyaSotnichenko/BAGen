@@ -20,6 +20,8 @@ interface GeneratePDFRequest {
 // Helper: sanitize markdown to fix broken Cyrillic spacing and ensure data URI images are valid
 function sanitizeMarkdown(src: string): string {
   let s = src;
+  let imageCount = 0;
+
   // Remove zero-width characters that may cause odd spacing
   s = s.replace(/[\u200B-\u200D\uFEFF]/g, "");
   // Normalize Windows/Mac line endings
@@ -28,45 +30,66 @@ function sanitizeMarkdown(src: string): string {
   // Unwrap fenced code blocks that contain data URI images
   s = s.replace(/```[\s\S]*?```/g, (block) => {
     const match = block.match(
-      /!\[[\s\S]*?\]\s*\(\s*data:image\/(?:png|jpeg|jpg);base64,[\s\S]*?\)/i
+      /!\[[\s\S]*?\]\s*\(\s*data:image\/(?:png|jpeg|jpg|gif|webp);base64,[\s\S]*?\)/i
     );
     if (match) {
+      imageCount++;
+      console.log(`🖼️ Знайдено картинку ${imageCount} в code block`);
       return match[0]; // return the image markdown without code fencing
     }
     const raw = block.match(
-      /data:image\/(?:png|jpeg|jpg);base64,[A-Za-z0-9+/=\s]+/i
+      /data:image\/(?:png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/=\s]+/i
     );
     if (raw) {
+      imageCount++;
       const cleaned = raw[0].replace(/\s+/g, "");
-      return `<img src="${cleaned}" alt="Embedded image" />`;
+      console.log(
+        `🖼️ Знайдено raw data URI ${imageCount}, довжина: ${cleaned.length}`
+      );
+      return `<img src="${cleaned}" alt="Embedded image" style="max-width: 100%; height: auto; display: block; margin: 10px 0;" />`;
     }
     return block;
   });
 
   // Unindent image markdown lines that might be treated as code due to leading spaces
   s = s.replace(
-    /^(\s{4,})(!\[[\s\S]*?\]\s*\(\s*data:image\/(?:png|jpeg|jpg);base64,[\s\S]*?\))/gm,
-    (_m, _indent, img) => img
+    /^(\s{4,})(!\[[\s\S]*?\]\s*\(\s*data:image\/(?:png|jpeg|jpg|gif|webp);base64,[\s\S]*?\))/gm,
+    (_m, _indent, img) => {
+      imageCount++;
+      console.log(`🖼️ Знайдено відступну картинку ${imageCount}`);
+      return img;
+    }
   );
 
   // Convert markdown image with data URI to HTML <img> and strip whitespace in base64
   s = s.replace(
-    /!\[([^\]]*)\]\s*\(\s*(data:image\/(?:png|jpeg|jpg);base64,[\s\S]*?)\)/gi,
+    /!\[([^\]]*)\]\s*\(\s*(data:image\/(?:png|jpeg|jpg|gif|webp);base64,[\s\S]*?)\)/gi,
     (_m, alt, uri) => {
+      imageCount++;
       const cleaned = String(uri).replace(/\s+/g, "");
-      return `<img src="${cleaned}" alt="${alt}" />`;
+      console.log(
+        `🖼️ Конвертую markdown картинку ${imageCount}, alt: "${alt}", довжина URI: ${cleaned.length}`
+      );
+      return `<img src="${cleaned}" alt="${
+        alt || "Generated image"
+      }" style="max-width: 100%; height: auto; display: block; margin: 10px 0; border: 1px solid #e2e8f0;" />`;
     }
   );
 
   // Convert standalone raw data URI occurrences to <img>
   s = s.replace(
-    /(^|\n)\s*(data:image\/(?:png|jpeg|jpg);base64,[A-Za-z0-9+/=\s]+)/gi,
+    /(^|\n)\s*(data:image\/(?:png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/=\s]+)/gi,
     (_m, prefix, uri) => {
+      imageCount++;
       const cleaned = String(uri).replace(/\s+/g, "");
-      return `${prefix}<img src="${cleaned}" alt="Embedded image" />`;
+      console.log(
+        `🖼️ Конвертую standalone URI ${imageCount}, довжина: ${cleaned.length}`
+      );
+      return `${prefix}<img src="${cleaned}" alt="Embedded image" style="max-width: 100%; height: auto; display: block; margin: 10px 0; border: 1px solid #e2e8f0;" />`;
     }
   );
 
+  console.log(`📊 Загалом знайдено та оброблено ${imageCount} картинок`);
   return s;
 }
 
@@ -150,7 +173,39 @@ export async function POST(request: NextRequest) {
     page.setDefaultNavigationTimeout(120000);
 
     // Use a less strict lifecycle event and extend timeout for setContent
-    await page.setContent(fullHtml, { waitUntil: "load", timeout: 120000 });
+    await page.setContent(fullHtml, { waitUntil: "networkidle0", timeout: 120000 });
+
+    // Дочікуємося завантаження всіх картинок на сторінці
+    await page.evaluate(async () => {
+      const images = Array.from(document.images);
+      await Promise.all(
+        images.map((img) =>
+          img.complete && img.naturalWidth > 0
+            ? Promise.resolve(true)
+            : new Promise((resolve) => {
+                const onDone = () => resolve(true);
+                img.addEventListener("load", onDone, { once: true });
+                img.addEventListener("error", onDone, { once: true });
+              })
+        )
+      );
+    });
+
+    // Збираємо статистику по картинках для логування
+    const imageStats = await page.evaluate(() => {
+      const imgs = Array.from(document.images);
+      return {
+        total: imgs.length,
+        loaded: imgs.filter((img) => img.complete && img.naturalWidth > 0).length,
+        details: imgs.slice(0, 50).map((img) => ({
+          src: (img.src || "").slice(0, 120),
+          complete: img.complete,
+          width: img.naturalWidth,
+          height: img.naturalHeight,
+        })),
+      };
+    });
+    console.log("📷 Статистика картинок після завантаження:", imageStats);
 
     const pdfBuffer = await page.pdf({
       format: "A4",

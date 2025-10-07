@@ -442,6 +442,7 @@ export default function HomePage() {
                 ? `📄 Завантажити тест ${selectedLevel?.toUpperCase()} (${selectedQuestionCount} питань)`
                 : "Посилання на PDF з'явиться тут"}
             </a>
+            {/* <p>{imageDataUri}</p> */}
 
             {/* {imageDataUri && (() => {
               const match = imageDataUri.match(/^data:(.*?);base64,(.*)$/)

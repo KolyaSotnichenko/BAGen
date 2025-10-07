@@ -204,12 +204,11 @@ export async function POST(request: NextRequest) {
       const messages = await azureOpenAI.beta.threads.messages.list(thread.id);
       console.log("🧪 Всього повідомлень у thread:", messages.data.length);
 
-      // Підбираємо перше повідомлення асистента з текстом і об'єднуємо всі текстові частини
-      const pickAssistantText = (): string => {
+      // Підбираємо ТЕКСТ асистента: об'єднати всі текстові частини зі всіх повідомлень асистента
+      const collectAssistantText = (): string => {
+        const parts: string[] = [];
         for (const msg of messages.data) {
           if (msg.role !== "assistant") continue;
-          const types = (msg.content || []).map((c: any) => c.type);
-          console.log("🧪 Типи контенту повідомлення асистента:", types);
           const textParts = (msg.content || [])
             .filter((c: any) => c.type === "text" && c.text)
             .map((c: any) =>
@@ -217,40 +216,39 @@ export async function POST(request: NextRequest) {
             )
             .filter(Boolean);
           if (textParts.length) {
-            return textParts.join("\n").trim();
+            parts.push(textParts.join("\n").trim());
           }
         }
-        return "";
+        return parts.join("\n\n").trim();
       };
 
-      // Знайти перше зображення, повернуте як image_file, і завантажити його як data URI
-      const pickFirstImageFileId = (): string | null => {
+      // Зібрати ВСІ зображення, повернуті як image_file, з усіх повідомлень асистента
+      const collectImageFileIds = (): string[] => {
+        const ids: string[] = [];
         for (const msg of messages.data) {
           if (msg.role !== "assistant") continue;
           for (const c of msg.content || []) {
             if (c.type === "image_file" && c.image_file?.file_id) {
-              return c.image_file.file_id;
+              ids.push(c.image_file.file_id);
             }
           }
         }
-        return null;
+        return ids;
       };
 
-      let imageDataUri: string | null = null;
-      const imageFileId = pickFirstImageFileId();
-      if (imageFileId) {
+      // Допоміжна функція: завантажити image_file та перетворити в data URI
+      const fetchImageDataUri = async (fileId: string): Promise<string | null> => {
         try {
-          const meta = await azureOpenAI.files.retrieve(imageFileId);
+          const meta = await azureOpenAI.files.retrieve(fileId);
           const filename = (meta as any)?.filename || "";
           let mime = "image/png";
-          if (
-            filename.toLowerCase().endsWith(".jpg") ||
-            filename.toLowerCase().endsWith(".jpeg")
-          )
-            mime = "image/jpeg";
-          else if (filename.toLowerCase().endsWith(".png")) mime = "image/png";
+          const lower = filename.toLowerCase();
+          if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) mime = "image/jpeg";
+          else if (lower.endsWith(".png")) mime = "image/png";
+          else if (lower.endsWith(".gif")) mime = "image/gif";
+          else if (lower.endsWith(".webp")) mime = "image/webp";
 
-          const fileResp: any = await azureOpenAI.files.content(imageFileId);
+          const fileResp: any = await azureOpenAI.files.content(fileId);
           let arrayBuffer: ArrayBuffer | null = null;
           if (typeof fileResp.arrayBuffer === "function") {
             arrayBuffer = await fileResp.arrayBuffer();
@@ -259,41 +257,52 @@ export async function POST(request: NextRequest) {
           } else if (typeof fileResp.blob === "function") {
             const blob = await fileResp.blob();
             arrayBuffer = await blob.arrayBuffer();
-          } else if (
-            fileResp?.body &&
-            typeof fileResp.body.arrayBuffer === "function"
-          ) {
+          } else if (fileResp?.body && typeof fileResp.body.arrayBuffer === "function") {
             arrayBuffer = await fileResp.body.arrayBuffer();
           }
 
           if (arrayBuffer) {
             const base64 = Buffer.from(arrayBuffer as any).toString("base64");
-            imageDataUri = `data:${mime};base64,${base64}`;
+            const dataUri = `data:${mime};base64,${base64}`;
             console.log("🖼️ Отримано зображення від асистента:", {
-              imageFileId,
+              fileId,
               filename,
               mime,
               size: (arrayBuffer as any).byteLength,
             });
+            return dataUri;
           } else {
-            console.warn("⚠️ Не вдалося отримати байти з image_file відповіді");
+            console.warn("⚠️ Не вдалося отримати байти з image_file відповіді:", { fileId });
+            return null;
           }
         } catch (e) {
           console.warn("⚠️ Не вдалося завантажити image_file контент:", e);
+          return null;
         }
-      }
+      };
 
-      const responseText = pickAssistantText();
+      // Зібрати всі зображення та сформувати фінальний Markdown
+      const responseText = collectAssistantText();
+      const imageFileIds = collectImageFileIds();
+      console.log("🧪 Знайдено image_file IDs:", imageFileIds);
+
+      const imagesDataUris = (await Promise.all(
+        imageFileIds.map((id) => fetchImageDataUri(id))
+      )).filter(Boolean) as string[];
+
+      const imagesMarkdown = imagesDataUris
+        .map((uri, idx) => `![Generated Image ${idx + 1}](${uri})`)
+        .join("\n\n");
+
       const finalMarkdown = (() => {
-        if (responseText && imageDataUri)
-          return `${responseText}\n\n![Generated Image](${imageDataUri})`;
+        if (responseText && imagesMarkdown) return `${responseText}\n\n${imagesMarkdown}`;
         if (responseText) return responseText;
-        if (imageDataUri) return `![Generated Image](${imageDataUri})`;
+        if (imagesMarkdown) return imagesMarkdown;
         return "";
       })();
 
       if (finalMarkdown) {
-        // Повертаємо сирий текст (Markdown) з можливим вбудованим зображенням + діагностичні заголовки
+        // Повертаємо сирий текст (Markdown) з усіма зображеннями + діагностичні заголовки
         return new NextResponse(finalMarkdown, {
           status: 200,
           headers: {
@@ -301,7 +310,8 @@ export async function POST(request: NextRequest) {
             "X-Code-Interpreter-Used": codeInterpreterUsed ? "true" : "false",
             "X-Thread-Id": thread.id,
             "X-Run-Id": run.id,
-            "X-Image-Embedded": imageDataUri ? "true" : "false",
+            "X-Image-Embedded": imagesDataUris.length > 0 ? "true" : "false",
+            "X-Images-Count": String(imagesDataUris.length),
           },
         });
       }
