@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
+import chromium from "@sparticuz/chromium";
+import puppeteerCore from "puppeteer-core";
 import puppeteer from "puppeteer";
 import { marked } from "marked";
 import { NotoSansBase64 } from "../../../lib/NotoSans-base64.js";
 
-export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const remoteExecutablePath =
+  "https://github.com/Sparticuz/chromium/releases/download/v121.0.0/chromium-v121.0.0-pack.tar";
+let browser: any;
 
 interface GeneratePDFRequest {
   llmResponse: string;
@@ -64,6 +70,25 @@ function sanitizeMarkdown(src: string): string {
   return s;
 }
 
+async function getBrowser() {
+  if (browser) return browser;
+
+  if (process.env.NEXT_PUBLIC_VERCEL_ENVIRONMENT === "production") {
+    browser = await puppeteerCore.launch({
+      args: chromium.args,
+      executablePath: await chromium.executablePath(remoteExecutablePath),
+      headless: true,
+    });
+  } else {
+    browser = await puppeteer.launch({
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      headless: true,
+    });
+  }
+
+  return browser;
+}
+
 export async function POST(request: NextRequest) {
   try {
     console.log("🚀 PDF Generation started");
@@ -117,15 +142,8 @@ export async function POST(request: NextRequest) {
 </html>`;
 
     // 3) Генеруємо PDF через Puppeteer
-    const executablePath =
-      process.env.PUPPETEER_EXECUTABLE_PATH ||
-      (await puppeteer.executablePath());
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-      executablePath,
-    });
-    const page = await browser.newPage();
+    const browserInstance = await getBrowser();
+    const page = await browserInstance.newPage();
 
     // Increase default timeouts to avoid Navigation timeout errors on slower environments
     page.setDefaultTimeout(120000);
@@ -140,7 +158,7 @@ export async function POST(request: NextRequest) {
       margin: { top: "20mm", right: "20mm", bottom: "20mm", left: "20mm" },
     });
 
-    await browser.close();
+    await page.close();
 
     console.log("✅ PDF згенеровано успішно через Puppeteer");
 
@@ -173,9 +191,53 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function GET() {
-  return NextResponse.json({
-    message: "PDF Generation API is working with Noto Sans font support",
-    timestamp: new Date().toISOString(),
-  });
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const urlParam = searchParams.get("url");
+
+  if (!urlParam) {
+    return new NextResponse("Please provide a URL.", { status: 400 });
+  }
+
+  // Prepend http:// if missing
+  let inputUrl = urlParam.trim();
+  if (!/^https?:\/\//i.test(inputUrl)) {
+    inputUrl = `http://${inputUrl}`;
+  }
+
+  // Validate the URL is a valid HTTP/HTTPS URL
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(inputUrl);
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+      return new NextResponse("URL must start with http:// or https://", {
+        status: 400,
+      });
+    }
+  } catch {
+    return new NextResponse("Invalid URL provided.", { status: 400 });
+  }
+
+  try {
+    const browserInstance = await getBrowser();
+    const page = await browserInstance.newPage();
+
+    await page.goto(parsedUrl.toString(), { waitUntil: "networkidle2" });
+    const screenshot = await page.screenshot({ type: "png" });
+
+    await page.close();
+
+    return new NextResponse(screenshot, {
+      headers: {
+        "Content-Type": "image/png",
+        "Content-Disposition": 'inline; filename="screenshot.png"',
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    return new NextResponse(
+      "An error occurred while generating the screenshot.",
+      { status: 500 }
+    );
+  }
 }

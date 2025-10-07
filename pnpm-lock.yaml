@@ -95,6 +95,9 @@ importers:
       '@sparticuz/chromium':
         specifier: ^140.0.0
         version: 140.0.0
+      '@sparticuz/chromium-min':
+        specifier: ^141.0.0
+        version: 141.0.0
       '@types/jspdf':
         specifier: ^2.0.0
         version: 2.0.0
@@ -1002,6 +1005,10 @@ packages:
 
   '@radix-ui/rect@1.1.0':
     resolution: {integrity: sha512-A9+lCBZoaMJlVKcRBz2YByCG+Cp2t6nAnMnNba+XiWxnj6r4JUFqfsgwocMBZU9LPtdxC6wB56ySYpc7LQIoJg==}
+
+  '@sparticuz/chromium-min@141.0.0':
+    resolution: {integrity: sha512-1EAR1NBrY4sa0hysDUCxCSI+9xc88/LYB3YjWFqMMu3CF82ATp8FzOeu7icwGxI02NAPcwzb0Uf1kIzsfH7Eiw==}
+    engines: {node: '>=20.11.0'}
 
   '@sparticuz/chromium@140.0.0':
     resolution: {integrity: sha512-pDyHiSp+buakpUq23b74JPC9T5M58665y6ULlh8uSuIDK0vxVGyLzjTTigQL202c6+0+NNp1Po5rgWcT7JSO5g==}
@@ -3199,6 +3206,15 @@ snapshots:
       '@types/react-dom': 18.3.7(@types/react@18.3.25)
 
   '@radix-ui/rect@1.1.0': {}
+
+  '@sparticuz/chromium-min@141.0.0':
+    dependencies:
+      follow-redirects: 1.15.11
+      tar-fs: 3.1.1
+    transitivePeerDependencies:
+      - bare-buffer
+      - debug
+      - react-native-b4a
 
   '@sparticuz/chromium@140.0.0':
     dependencies:
