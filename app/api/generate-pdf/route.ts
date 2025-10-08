@@ -89,6 +89,34 @@ function sanitizeMarkdown(src: string): string {
     }
   );
 
+  // Convert general Markdown image notation to HTML <img> (non-data URIs)
+  s = s.replace(/!\[([^\]]*)\]\s*\(\s*([^\)]+)\s*\)/g, (m, alt, url) => {
+    const srcVal = String(url || "").trim();
+    // Skip if already data URI (handled above)
+    if (/^data:/i.test(srcVal)) return m;
+    imageCount++;
+    const safeAlt = String(alt || "").replace(/"/g, "&quot;");
+    return `<img src="${srcVal}" alt="${safeAlt}" />`;
+  });
+
+  // Remove/neutralize unknown URL schemes in src/href attributes
+  const knownSchemes = ["http", "https", "data", "blob", "file", "about"];
+  let unknownCount = 0;
+  s = s.replace(/\s(src|href)="([^"]+)"/gi, (_m, attr, url) => {
+    const v = String(url);
+    const schemeMatch = v.match(/^([a-zA-Z][a-zA-Z0-9+\-.]*):/);
+    const scheme = schemeMatch ? schemeMatch[1].toLowerCase() : "";
+    if (scheme && !knownSchemes.includes(scheme)) {
+      unknownCount++;
+      return ` ${attr}="" data-removed-url="${v.replace(/"/g, "")}"`;
+    }
+    return ` ${attr}="${v}"`;
+  });
+
+  if (unknownCount > 0) {
+    console.warn("🧹 Санітизація: видалено невідомих URL схем:", unknownCount);
+  }
+
   console.log(`📊 Загалом знайдено та оброблено ${imageCount} картинок`);
   return s;
 }
@@ -132,7 +160,12 @@ export async function POST(request: NextRequest) {
 
     // 1) Санітуємо Markdown та конвертуємо → HTML
     const sanitizedMarkdown = sanitizeMarkdown(llmResponse);
+    console.log(
+      "🧩 Довжина санітізованого Markdown:",
+      sanitizedMarkdown.length
+    );
     const contentHtml = marked.parse(sanitizedMarkdown);
+    console.log("🧩 Довжина згенерованого HTML:", String(contentHtml).length);
 
     // 2) Обгортка HTML з базовими стилями для друку
     const fullHtml = `<!doctype html>
@@ -156,6 +189,8 @@ export async function POST(request: NextRequest) {
     table { width: 100%; border-collapse: collapse; }
     th, td { border: 1px solid #e2e8f0; padding: 6px; }
     img { max-width: 100%; height: auto; display: block; }
+    .mermaid { page-break-inside: avoid; margin: 12px 0; }
+    .mermaid svg { max-width: 100% !important; height: auto !important; display: block; }
   </style>
 </head>
 <body>
@@ -163,18 +198,38 @@ export async function POST(request: NextRequest) {
   <div>${contentHtml}</div>
 </body>
 </html>`;
+    console.log("🧩 Довжина повного HTML для рендеру:", fullHtml.length);
 
     // 3) Генеруємо PDF через Puppeteer
     const browserInstance = await getBrowser();
     const page = await browserInstance.newPage();
 
+    // Консоль сторінки → серверні логи
+    page.on("console", (msg: any) => {
+      try {
+        console.log("🖥️ Page console:", msg.type(), msg.text());
+      } catch (_) {}
+    });
+
     // Increase default timeouts to avoid Navigation timeout errors on slower environments
     page.setDefaultTimeout(120000);
     page.setDefaultNavigationTimeout(120000);
 
-    // Use a less strict lifecycle event and extend timeout for setContent
-    await page.setContent(fullHtml, { waitUntil: "networkidle0", timeout: 120000 });
+    console.log("📄 Встановлюю контент у сторінку...");
+    // Менш строгий тригер, щоб не зависати на мережевих запитах
+    await page.setContent(fullHtml, {
+      waitUntil: "domcontentloaded",
+      timeout: 120000,
+    });
+    console.log("📄 Контент встановлено.");
 
+    // Якщо використовуються Mermaid-блоки, можна логувати їх кількість
+    const mermaidBlocks = await page.evaluate(
+      () => document.querySelectorAll(".mermaid").length
+    );
+    console.log("📐 Кількість .mermaid блоків у DOM:", mermaidBlocks);
+
+    console.log("🖼️ Починаю очікування картинок...");
     // Дочікуємося завантаження всіх картинок на сторінці
     await page.evaluate(async () => {
       const images = Array.from(document.images);
@@ -190,13 +245,19 @@ export async function POST(request: NextRequest) {
         )
       );
     });
+    console.log("🖼️ Очікування картинок завершено.");
 
     // Збираємо статистику по картинках для логування
     const imageStats = await page.evaluate(() => {
       const imgs = Array.from(document.images);
+      const mermaidSvgs = Array.from(
+        document.querySelectorAll(".mermaid svg")
+      ).length;
       return {
-        total: imgs.length,
-        loaded: imgs.filter((img) => img.complete && img.naturalWidth > 0).length,
+        totalImages: imgs.length,
+        loadedImages: imgs.filter((img) => img.complete && img.naturalWidth > 0)
+          .length,
+        mermaidSvgCount: mermaidSvgs,
         details: imgs.slice(0, 50).map((img) => ({
           src: (img.src || "").slice(0, 120),
           complete: img.complete,
@@ -205,7 +266,7 @@ export async function POST(request: NextRequest) {
         })),
       };
     });
-    console.log("📷 Статистика картинок після завантаження:", imageStats);
+    console.log("📷 Статистика зображень та Mermaid:", imageStats);
 
     const pdfBuffer = await page.pdf({
       format: "A4",
@@ -215,15 +276,16 @@ export async function POST(request: NextRequest) {
 
     await page.close();
 
-    console.log("✅ PDF згенеровано успішно через Puppeteer");
+    console.log(
+      "✅ PDF згенеровано успішно через Puppeteer, байт:",
+      pdfBuffer.byteLength
+    );
 
     return new NextResponse(pdfBuffer, {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="${
-          level || "ba"
-        }-test-${Date.now()}.pdf"`,
+        "X-PDF-Bytes": String(pdfBuffer.byteLength),
       },
     });
   } catch (error) {

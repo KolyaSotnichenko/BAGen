@@ -229,10 +229,18 @@ export default function HomePage() {
       console.log('🧪 Code Interpreter Used (з заголовка):', ciUsedHeader)
       setCodeInterpreterUsed(ciUsedHeader)
 
-      const markdownText = await generateResponse.text()
+      // Читаємо JSON та використовуємо контент, а не сирий JSON-текст
+      const { success, response, responseHtml, error } = await generateResponse.json()
 
-      if (!markdownText || markdownText.trim().length === 0) {
-        throw new Error('Не вдалося отримати відповідь від AI')
+      if (!success) {
+        throw new Error(error || 'Помилка генерації питань')
+      }
+
+      const markdownText = response || ''
+      const htmlText = responseHtml || ''
+
+      if ((!markdownText || markdownText.trim().length === 0) && (!htmlText || htmlText.trim().length === 0)) {
+        throw new Error('Не вдалося отримати контент від AI')
       }
 
       // Витягуємо першу картинку як data URI (для завантаження та перевірки)
@@ -253,7 +261,7 @@ export default function HomePage() {
         body: JSON.stringify({
           level: selectedLevel,
           language: selectedLanguage,
-          llmResponse: markdownText,
+          llmResponse: markdownText, // передаємо лише Markdown контент, НЕ JSON
         }),
       })
 

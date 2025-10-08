@@ -1,6 +1,8 @@
 import { ECBA_SYSTEM_PROMPT } from "@/shared/prompts";
 import { NextRequest, NextResponse } from "next/server";
 import { AzureOpenAI } from "openai";
+import { RunCreateParamsNonStreaming } from "openai/resources/beta/threads/runs/runs.mjs";
+import { marked } from "marked"; // додано: конвертація Markdown → HTML
 
 // Типи для запиту
 interface GenerateTestRequest {
@@ -10,22 +12,6 @@ interface GenerateTestRequest {
   customPrompt?: string;
   testType?: "basic" | "detailed" | "babok" | "practical";
   systemPrompt?: string; // Системний промпт від користувача
-}
-
-interface TestQuestion {
-  id: number;
-  question: string;
-  options: string[];
-  correctAnswer: number;
-  explanation: string;
-  knowledgeArea?: string;
-  difficulty: "easy" | "medium" | "hard";
-}
-
-interface GenerateTestResponse {
-  success: boolean;
-  response: string;
-  error?: string;
 }
 
 // Ініціалізація Azure OpenAI клієнта
@@ -88,6 +74,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Додано: змінні для діагностики (час, ідентифікатори)
+    const startedAt = Date.now();
+    let threadId: string | undefined;
+    let runId: string | undefined;
+    const executedRuns: string[] = [];
+
     // Визначаємо дефолтний системний промпт
     const baseSystemPrompt = defaultSystemPrompts[body.level];
 
@@ -138,6 +130,7 @@ export async function POST(request: NextRequest) {
 
     // Створюємо thread
     const thread = await azureOpenAI.beta.threads.create();
+    threadId = thread.id;
 
     // Додаємо повідомлення до thread
     await azureOpenAI.beta.threads.messages.create(thread.id, {
@@ -145,12 +138,39 @@ export async function POST(request: NextRequest) {
       content: fullPrompt,
     });
 
-    // Запускаємо асистента
-    const run = await azureOpenAI.beta.threads.runs.create(thread.id, {
+    const runOptions: RunCreateParamsNonStreaming = {
       assistant_id: ASSISTANT_ID,
-    });
+    };
+    const hasFileSearch = assistant.tools?.some(
+      (t: any) => t.type === "file_search"
+    );
+    const hasCodeInterpreter = assistant.tools?.some(
+      (t: any) => t.type === "code_interpreter"
+    );
 
-    // Очікуємо завершення виконання
+    if (hasFileSearch) {
+      runOptions.tool_choice = { type: "file_search" };
+      console.log("🧪 Фаза 1: використовую tool_choice=file_search");
+    } else if (hasCodeInterpreter) {
+      runOptions.tool_choice = { type: "code_interpreter" };
+      console.log(
+        "🧪 Фаза 1: file_search недоступний, використовую code_interpreter"
+      );
+    } else {
+      console.log(
+        "🧪 Фаза 1: жоден з tools (file_search/code_interpreter) недоступний, запускаю без tool_choice"
+      );
+    }
+
+    // Запускаємо перший run (Фаза 1)
+    const run = await azureOpenAI.beta.threads.runs.create(
+      thread.id,
+      runOptions
+    );
+    runId = run.id;
+    executedRuns.push(run.id);
+
+    // Очікуємо завершення виконання Фази 1
     let runStatus = await azureOpenAI.beta.threads.runs.retrieve(
       thread.id,
       run.id
@@ -172,37 +192,176 @@ export async function POST(request: NextRequest) {
       attempts++;
     }
 
+    console.log("🏁 Run status after polling (Phase 1):", {
+      status: runStatus.status,
+      attempts,
+      elapsedMs: Date.now() - startedAt,
+      threadId,
+      runId,
+    });
+
     if (runStatus.status === "completed") {
-      // Дістаємо кроки виконання run, щоб перевірити використання code interpreter
-      let codeInterpreterUsed = false;
-      try {
-        const steps = await azureOpenAI.beta.threads.runs.steps.list(
-          thread.id,
-          run.id
+      // Отримуємо повідомлення після Фази 1
+      const messagesAfterPhase1 = await azureOpenAI.beta.threads.messages.list(
+        thread.id
+      );
+      const assistantTexts = (messagesAfterPhase1.data || [])
+        .filter((m: any) => m.role === "assistant")
+        .flatMap((m: any) =>
+          (m.content || [])
+            .filter((c: any) => c.type === "text")
+            .map((c: any) =>
+              typeof c.text === "string" ? c.text : c.text?.value || ""
+            )
         );
-        console.log("🧪 Кількість кроків run:", steps.data.length);
-        for (const step of steps.data) {
-          const details: any =
-            (step as any).step_details || (step as any).details;
-          const toolCalls: any[] = details?.tool_calls || [];
-          for (const tc of toolCalls) {
-            const type = tc.type || tc?.tool_call_type;
-            if (type === "code_interpreter" || type === "code") {
-              codeInterpreterUsed = true;
+      const combinedAssistantText = assistantTexts.join("\n\n");
+
+      // Витягуємо кодові блоки з відповіді
+      const extractCodeBlocks = (
+        text: string
+      ): Array<{ lang: string; code: string }> => {
+        const blocks: Array<{ lang: string; code: string }> = [];
+        const re = /```([\w+-]*)?\n([\s\S]*?)```/g;
+        let match;
+        while ((match = re.exec(text)) !== null) {
+          const lang = (match[1] || "").trim();
+          const code = (match[2] || "").trim();
+          if (code) blocks.push({ lang, code });
+        }
+        return blocks;
+      };
+      const codeBlocks = extractCodeBlocks(combinedAssistantText);
+      console.log(
+        "🔎 Знайдено кодових блоків у відповіді Фази 1:",
+        codeBlocks.length
+      );
+
+      // Якщо є код — запускаємо Фазу 2: виконай код у code_interpreter
+      let secondRunId: string | undefined;
+      let secondRunStatus: any | undefined;
+
+      if (codeBlocks.length > 0 && hasCodeInterpreter) {
+        const followUpContent =
+          `Будь ласка, виконай наведений нижче код у code_interpreter.\n\n` +
+          codeBlocks
+            .map((b) => `\`\`\`${b.lang || ""}\n${b.code}\n\`\`\``)
+            .join("\n\n");
+
+        await azureOpenAI.beta.threads.messages.create(thread.id, {
+          role: "user",
+          content: followUpContent,
+        });
+
+        const run2Options: RunCreateParamsNonStreaming = {
+          assistant_id: ASSISTANT_ID,
+          tool_choice: { type: "code_interpreter" },
+        };
+        console.log("🧪 Фаза 2: запуск code_interpreter із переданим кодом");
+        const run2 = await azureOpenAI.beta.threads.runs.create(
+          thread.id,
+          run2Options
+        );
+        secondRunId = run2.id;
+        executedRuns.push(run2.id);
+
+        // Очікуємо завершення Фази 2
+        secondRunStatus = await azureOpenAI.beta.threads.runs.retrieve(
+          thread.id,
+          run2.id
+        );
+        let attempts2 = 0;
+        while (
+          (secondRunStatus.status === "queued" ||
+            secondRunStatus.status === "in_progress") &&
+          attempts2 < maxAttempts
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          secondRunStatus = await azureOpenAI.beta.threads.runs.retrieve(
+            thread.id,
+            run2.id
+          );
+          attempts2++;
+        }
+        console.log("🏁 Run status after polling (Phase 2):", {
+          status: secondRunStatus.status,
+          attempts: attempts2,
+          threadId,
+          runId: secondRunId,
+        });
+
+        if (secondRunStatus.status !== "completed") {
+          console.warn(
+            "⚠️ Фаза 2 не завершилась успішно:",
+            secondRunStatus.status,
+            secondRunStatus.last_error
+          );
+        }
+      }
+
+      // Збираємо кроки виконання зі всіх запусків, щоб перевірити використання code interpreter
+      let codeInterpreterUsed = false;
+      let runStepsData: any[] = [];
+      for (const rId of executedRuns) {
+        try {
+          const steps = await azureOpenAI.beta.threads.runs.steps.list(
+            thread.id,
+            rId
+          );
+          const currentSteps = steps.data || [];
+          runStepsData = runStepsData.concat(currentSteps);
+          for (const step of currentSteps) {
+            const details: any =
+              (step as any).step_details || (step as any).details;
+            const toolCalls: any[] = details?.tool_calls || [];
+
+            for (const tc of toolCalls) {
+              const type = tc.type || tc?.tool_call_type;
+              if (type === "code_interpreter" || type === "code") {
+                codeInterpreterUsed = true;
+                const outputs: any[] =
+                  tc.code_interpreter?.outputs || tc.outputs || [];
+                console.log(
+                  "🔍 code_interpreter outputs count:",
+                  outputs?.length || 0
+                );
+                for (const out of outputs || []) {
+                  const outType =
+                    out?.type ||
+                    (out?.image ? "image" : null) ||
+                    (out?.logs ? "logs" : null) ||
+                    (out?.file ? "file" : null);
+                  const fileId =
+                    out?.image?.file_id ||
+                    out?.image_file?.file_id ||
+                    out?.file?.file_id ||
+                    out?.file_id ||
+                    null;
+                  console.log("🔍 output item:", {
+                    type: outType,
+                    fileId,
+                    keys: Object.keys(out || {}),
+                  });
+                }
+              }
             }
           }
+        } catch (e) {
+          console.warn(
+            "⚠️ Не вдалося отримати кроки run для перевірки code interpreter:",
+            e
+          );
         }
-        console.log("🧪 Code Interpreter використано:", codeInterpreterUsed);
-      } catch (e) {
-        console.warn(
-          "⚠️ Не вдалося отримати кроки run для перевірки code interpreter:",
-          e
-        );
       }
+      console.log("🧪 Code Interpreter використано:", codeInterpreterUsed);
 
       // Отримуємо повідомлення з thread
       const messages = await azureOpenAI.beta.threads.messages.list(thread.id);
       console.log("🧪 Всього повідомлень у thread:", messages.data.length);
+      for (const msg of messages.data) {
+        const types = (msg.content || []).map((c: any) => c.type);
+        const role = msg.role;
+        console.log(`🧪 Повідомлення role=${role}, типи контенту:`, types);
+      }
 
       // Підбираємо ТЕКСТ асистента: об'єднати всі текстові частини зі всіх повідомлень асистента
       const collectAssistantText = (): string => {
@@ -219,7 +378,10 @@ export async function POST(request: NextRequest) {
             parts.push(textParts.join("\n").trim());
           }
         }
-        return parts.join("\n\n").trim();
+        const combined = parts.join("\n\n").trim();
+        console.log(combined);
+        console.log("🧪 Зібраний текст асистента, довжина:", combined.length);
+        return combined;
       };
 
       // Зібрати ВСІ зображення, повернуті як image_file, з усіх повідомлень асистента
@@ -236,14 +398,48 @@ export async function POST(request: NextRequest) {
         return ids;
       };
 
+      // NEW: зібрати image_file ID із кроків run (outputs code_interpreter)
+      const collectImageFileIdsFromSteps = (): string[] => {
+        const ids: string[] = [];
+        for (const step of runStepsData) {
+          const details: any =
+            (step as any).step_details || (step as any).details;
+          const toolCalls: any[] = details?.tool_calls || [];
+          for (const tc of toolCalls) {
+            const type = tc.type || tc?.tool_call_type;
+            if (type === "code_interpreter" || type === "code") {
+              const outputs: any[] =
+                tc.code_interpreter?.outputs || tc.outputs || [];
+              for (const out of outputs || []) {
+                // Спробуємо знайти різні варіанти структури
+                const fileId =
+                  out?.image?.file_id ||
+                  out?.image_file?.file_id ||
+                  out?.file?.file_id ||
+                  out?.file_id ||
+                  null;
+                if (fileId) {
+                  ids.push(String(fileId).replace(/^file-/, "file_"));
+                }
+              }
+            }
+          }
+        }
+        console.log("🧪 Зібрано image_file IDs із run steps:", ids);
+        return ids;
+      };
+
       // Допоміжна функція: завантажити image_file та перетворити в data URI
-      const fetchImageDataUri = async (fileId: string): Promise<string | null> => {
+      const fetchImageDataUri = async (
+        fileId: string
+      ): Promise<string | null> => {
         try {
           const meta = await azureOpenAI.files.retrieve(fileId);
           const filename = (meta as any)?.filename || "";
           let mime = "image/png";
           const lower = filename.toLowerCase();
-          if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) mime = "image/jpeg";
+          if (lower.endsWith(".jpg") || lower.endsWith(".jpeg"))
+            mime = "image/jpeg";
           else if (lower.endsWith(".png")) mime = "image/png";
           else if (lower.endsWith(".gif")) mime = "image/gif";
           else if (lower.endsWith(".webp")) mime = "image/webp";
@@ -257,7 +453,10 @@ export async function POST(request: NextRequest) {
           } else if (typeof fileResp.blob === "function") {
             const blob = await fileResp.blob();
             arrayBuffer = await blob.arrayBuffer();
-          } else if (fileResp?.body && typeof fileResp.body.arrayBuffer === "function") {
+          } else if (
+            fileResp?.body &&
+            typeof fileResp.body.arrayBuffer === "function"
+          ) {
             arrayBuffer = await fileResp.body.arrayBuffer();
           }
 
@@ -272,7 +471,10 @@ export async function POST(request: NextRequest) {
             });
             return dataUri;
           } else {
-            console.warn("⚠️ Не вдалося отримати байти з image_file відповіді:", { fileId });
+            console.warn(
+              "⚠️ Не вдалося отримати байти з image_file відповіді:",
+              { fileId }
+            );
             return null;
           }
         } catch (e) {
@@ -281,79 +483,137 @@ export async function POST(request: NextRequest) {
         }
       };
 
-      // Зібрати всі зображення та сформувати фінальний Markdown
-      const responseText = collectAssistantText();
-      const imageFileIds = collectImageFileIds();
-      console.log("🧪 Знайдено image_file IDs:", imageFileIds);
+      // Зібрати всі зображення саме з цього виконання та сформувати фінальний Markdown
+      // Використовуємо текст Фази 1 (combinedAssistantText)
+      const responseText = combinedAssistantText;
+      const messageImageIds = collectImageFileIds();
+      const stepImageIds = collectImageFileIdsFromSteps();
+      const imageFileIds = Array.from(
+        new Set([...messageImageIds, ...stepImageIds])
+      );
+      console.log(
+        "🧪 Знайдено image_file IDs (повідомлення+кроки):",
+        imageFileIds
+      );
 
-      const imagesDataUris = (await Promise.all(
-        imageFileIds.map((id) => fetchImageDataUri(id))
-      )).filter(Boolean) as string[];
+      const imagesDataUris = (
+        await Promise.all(imageFileIds.map((id) => fetchImageDataUri(id)))
+      ).filter(Boolean) as string[];
 
-      const imagesMarkdown = imagesDataUris
-        .map((uri, idx) => `![Generated Image ${idx + 1}](${uri})`)
-        .join("\n\n");
-
-      const finalMarkdown = (() => {
-        if (responseText && imagesMarkdown) return `${responseText}\n\n${imagesMarkdown}`;
-        if (responseText) return responseText;
-        if (imagesMarkdown) return imagesMarkdown;
-        return "";
-      })();
-
-      if (finalMarkdown) {
-        // Повертаємо сирий текст (Markdown) з усіма зображеннями + діагностичні заголовки
-        return new NextResponse(finalMarkdown, {
-          status: 200,
-          headers: {
-            "Content-Type": "text/plain; charset=utf-8",
-            "X-Code-Interpreter-Used": codeInterpreterUsed ? "true" : "false",
-            "X-Thread-Id": thread.id,
-            "X-Run-Id": run.id,
-            "X-Image-Embedded": imagesDataUris.length > 0 ? "true" : "false",
-            "X-Images-Count": String(imagesDataUris.length),
-          },
+      // Додатково: отримаємо інформацію про кроки для діагностики успішного виконання
+      try {
+        const steps = await azureOpenAI.beta.threads.runs.steps.list(
+          thread.id,
+          run.id
+        );
+        console.log("📋 Run steps (completed):", {
+          count: steps.data?.length ?? 0,
+          statuses: (steps.data || []).map((s: any) => s.status),
         });
+      } catch (e) {
+        console.warn("⚠️ Не вдалося отримати кроки run для діагностики:", e);
       }
 
-      // Якщо немає тексту і немає зображення — повертаємо 200 з поясненням
-      console.warn(
-        "⚠️ Асистент завершився без текстового контенту та без зображень."
+      // 1) Якщо є картинки — замінити fenced code blocks на картинки по порядку
+      let finalMarkdown = responseText;
+      if (imagesDataUris.length > 0) {
+        const codeBlockRegex = /```[\s\S]*?```/g;
+        let imgIdx = 0;
+        const replacedMarkdown = responseText.replace(codeBlockRegex, () => {
+          const uri = imagesDataUris[imgIdx++];
+          return uri ? `![diagram ${imgIdx}](${uri})` : ""; // якщо картинка закінчилась — просто прибираємо код
+        });
+
+        // 2) Якщо картинок більше ніж код-блоків — додати решту в кінці
+        const remainingImages = imagesDataUris
+          .slice(imgIdx)
+          .map((uri, i) => `![diagram ${imgIdx + i + 1}](${uri})`);
+
+        finalMarkdown = [replacedMarkdown, ...remainingImages]
+          .filter(Boolean)
+          .join("\n\n");
+      }
+
+      // 2) Конвертуємо Markdown → HTML для прямого використання
+      const responseHtml = marked.parse(finalMarkdown);
+
+      console.log(
+        "✅ Фаза 1 завершена. Повертаю контент із картинками замість коду.",
+        {
+          threadId,
+          runId,
+          imagesFound: imageFileIds.length,
+          imagesEmbedded: imagesDataUris.length,
+          elapsedMs: Date.now() - startedAt,
+        }
       );
-      return new NextResponse(
-        "⚠️ Асистент згенерував результат без текстового Markdown та без зображень. Додайте до промпту інструкцію вставляти зображення як інлайн data:image/png;base64,... у Markdown.",
+
+      return NextResponse.json(
+        {
+          success: true,
+          response: finalMarkdown,
+          responseHtml,
+        },
         {
           status: 200,
           headers: {
-            "Content-Type": "text/plain; charset=utf-8",
-            "X-Code-Interpreter-Used": codeInterpreterUsed ? "true" : "false",
-            "X-Thread-Id": thread.id,
-            "X-Run-Id": run.id,
-            "X-Image-Embedded": "false",
+            "X-Run-Status": "completed",
+            "X-Thread-Id": threadId || "",
+            "X-Run-Id": runId || "",
+            "X-Attempts": String(attempts),
+            "X-Elapsed-Ms": String(Date.now() - startedAt),
+            "X-Image-Ids-Count": String(imageFileIds.length),
+            "X-Images-Embedded-Count": String(imagesDataUris.length),
+            "X-Response-Format": "markdown+html",
           },
         }
       );
-    } else if (runStatus.status === "failed") {
-      console.error("Асистент не зміг виконати запит:", runStatus.last_error);
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Асистент не зміг згенерувати тест: ${
-            runStatus.last_error?.message || "Невідома помилка"
-          }`,
-        },
-        { status: 500 }
-      );
     } else if (attempts >= maxAttempts) {
+      console.error("⏱️ Таймаут виконання run", {
+        status: runStatus.status,
+        attempts,
+        elapsedMs: Date.now() - startedAt,
+        threadId,
+        runId,
+      });
       return NextResponse.json(
         { success: false, error: "Таймаут виконання запиту (120 секунд)" },
-        { status: 408 }
+        {
+          status: 408,
+          headers: {
+            "X-Run-Status": String(runStatus.status),
+            "X-Thread-Id": threadId || "",
+            "X-Run-Id": runId || "",
+            "X-Attempts": String(attempts),
+            "X-Elapsed-Ms": String(Date.now() - startedAt),
+          },
+        }
       );
     }
 
+    // Неочікуваний статус (requires_action, cancelling, інше)
+    console.error("❓ Неочікуваний статус run:", {
+      status: runStatus.status,
+      attempts,
+      elapsedMs: Date.now() - startedAt,
+      threadId,
+      runId,
+      last_error: runStatus.last_error,
+      required_action: (runStatus as any).required_action || undefined,
+    });
+
     return NextResponse.json(
       { success: false, error: "Неочікувана помилка при роботі з асистентом" },
-      { status: 500 }
+      {
+        status: 500,
+        headers: {
+          "X-Run-Status": String(runStatus.status),
+          "X-Thread-Id": threadId || "",
+          "X-Run-Id": runId || "",
+          "X-Attempts": String(attempts),
+          "X-Elapsed-Ms": String(Date.now() - startedAt),
+        },
+      }
     );
   } catch (error) {
     console.error("Помилка генерації тесту:", error);
@@ -363,7 +623,16 @@ export async function POST(request: NextRequest) {
         success: false,
         error: error instanceof Error ? error.message : "Невідома помилка",
       },
-      { status: 500 }
+      {
+        status: 500,
+        headers: {
+          "X-Stage": "POST/generate-test catch",
+          "X-Thread-Id": "",
+          "X-Run-Id": "",
+          "X-Error-Message":
+            error instanceof Error ? error.message : "Unknown error",
+        },
+      }
     );
   }
 }

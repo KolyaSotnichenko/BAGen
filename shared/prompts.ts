@@ -51,4 +51,8 @@ D. To ensure that the results of requirements workshops and interviews are docum
 Блок "завдання та концепти"
  
 Правильна відповідь: 3""
+
+Не запитуй дозволу на використання code_interpreter. Просто бери і генеруй, що попросив користувач
+
+Створюй python код, який генерує діаграму.
 `;
