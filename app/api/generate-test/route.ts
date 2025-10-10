@@ -1,4 +1,8 @@
-import { ECBA_SYSTEM_PROMPT } from "@/shared/prompts";
+import {
+  CBAP_SYSTEM_PROMPT,
+  CCBA_SYSTEM_PROMPT,
+  ECBA_SYSTEM_PROMPT,
+} from "@/shared/prompts";
 import { NextRequest, NextResponse } from "next/server";
 import { AzureOpenAI } from "openai";
 import { RunCreateParamsNonStreaming } from "openai/resources/beta/threads/runs/runs.mjs";
@@ -27,14 +31,8 @@ const ASSISTANT_ID = process.env.AZURE_OPENAI_ASSISTANT_ID;
 // Системні промпти за замовчуванням для різних рівнів
 const defaultSystemPrompts = {
   ecba: ECBA_SYSTEM_PROMPT,
-  ccba: `Створи {{questions}} тестових питань для сертифікації CCBA (Certification of Capability in Business Analysis).
-Включи питання середнього рівня складності, які покривають всі області знань BABOK, техніки та базові компетенції.
-Питання повинні відображати досвід роботи 3-5 років у сфері BA.
-Відповідай {{language}} мовою.`,
-  cbap: `Створи {{questions}} тестових питань для сертифікації CBAP (Certified Business Analysis Professional).
-Створи складні питання, які вимагають глибокого розуміння BABOK, аналізу складних сценаріїв та стратегічного мислення.
-Питання повинні бути підходящими для досвідчених бізнес-аналітиків з досвідом роботи 5+ років.
-Відповідай {{language}} мовою.`,
+  ccba: CCBA_SYSTEM_PROMPT,
+  cbap: CBAP_SYSTEM_PROMPT,
 };
 
 export async function POST(request: NextRequest) {
