@@ -37,17 +37,12 @@ const levels: LevelConfig[] = [
 ]
 
 const defaultPrompts: Record<CertificationLevel, string> = {
-  ecba: `Create {{questions}} test questions for ECBA (Entry Certificate in Business Analysis) certification.
-Focus on fundamental business analysis concepts, basic techniques, and introductory BABOK knowledge.
-Questions should be appropriate for beginner business analysts.
+  ecba: `Create {{questions}} test questions for CCBA (Certification of Capability in Business Analysis) certification.
 Respond in {{language}} language.`,
   ccba: `Create {{questions}} test questions for CCBA (Certification of Capability in Business Analysis) certification.
-Include medium complexity questions covering all BABOK knowledge areas, techniques, and core competencies.
-Questions should reflect 3-5 years of business analyst experience.
+Respond in {{language}} language.s of business analyst experience.
 Respond in {{language}} language.`,
-  cbap: `Create {{questions}} test questions for CBAP (Certified Business Analysis Professional) certification.
-Create complex questions requiring deep BABOK understanding, complex scenario analysis, and strategic thinking.
-Questions should be appropriate for experienced business analysts with 5+ years of experience.
+  cbap: `Create {{questions}} test questions for CCBA (Certification of Capability in Business Analysis) certification.
 Respond in {{language}} language.`,
 }
 

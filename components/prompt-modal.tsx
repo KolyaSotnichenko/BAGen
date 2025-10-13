@@ -11,32 +11,14 @@ interface PromptModalProps {
 }
 
 const promptTemplates: Record<string, string> = {
-  basic: `Створи {{questions}} питань для сертифікації {{level}}.
-Зроби питання зрозумілими та релевантними до рівня сертифікації.
-Відповідай українською мовою.`,
-  detailed: `Створи {{questions}} комплексних тестових питань для сертифікації {{level}}.
-Включи:
-- Питання з множинним вибором з 4 варіантами
-- Питання на основі сценаріїв
-- Покриття областей знань BABOK
-- Різні рівні складності відповідно до {{level}}
-Надай правильні відповіді з поясненнями.
-Відповідай українською мовою.`,
-  babok: `Створи {{questions}} питань для сертифікації {{level}}, що відповідають BABOK v3.
-Покрий всі 6 областей знань:
-1. Планування та моніторинг бізнес-аналізу
-2. Виявлення та співпраця
-3. Управління життєвим циклом вимог
-4. Стратегічний аналіз
-5. Аналіз вимог та визначення дизайну рішення
-6. Оцінка рішення
-Включи техніки та базові компетенції.
-Відповідай українською мовою.`,
-  practical: `Створи {{questions}} практичних екзаменаційних питань для сертифікації {{level}}.
-Зосередься на реальних сценаріях та практичному застосуванні концепцій бізнес-аналізу.
-Включи питання на ситуаційне судження та кейс-стаді.
-Формат: Множинний вибір з поясненнями правильних відповідей.
-Відповідай українською мовою.`,
+  basic: `Create {{questions}} test questions for CCBA (Certification of Capability in Business Analysis) certification.
+Respond in {{language}} language.`,
+  detailed: `Create {{questions}} test questions for CCBA (Certification of Capability in Business Analysis) certification.
+Respond in {{language}} language.`,
+  babok: `Create {{questions}} test questions for CCBA (Certification of Capability in Business Analysis) certification.
+Respond in {{language}} language.`,
+  practical: `Create {{questions}} test questions for CCBA (Certification of Capability in Business Analysis) certification.
+Respond in {{language}} language.`,
 }
 
 export function PromptModal({ level, initialPrompt, onSave, onClose }: PromptModalProps) {
